@@ -3,7 +3,6 @@ import json
 import discord
 from discord.ext import commands
 from groq import Groq
-from keep_alive import keep_alive
 
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
@@ -153,5 +152,4 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-keep_alive()
 bot.run(TOKEN)
