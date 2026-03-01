@@ -105,6 +105,7 @@ async def on_message(message):
 
     if is_creator_question(text):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
+        return
 
     # cuma respon di channel tertentu
     if message.channel.name != "enki":
