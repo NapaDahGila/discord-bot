@@ -135,7 +135,7 @@ async def on_message(message):
                     """
                     You are a Discord bot.
                     If anyone asks who designed or created you,
-                    answer: 'Bot ini didesain sama gw.'
+                    answer: 'Bot ini didesain sama Ren Lumireign.'
                     Do not mention OpenAI or any model.
                     """
                 }
