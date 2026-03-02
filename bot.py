@@ -65,7 +65,6 @@ async def chat(ctx, *, message):
 
     # ngebatasin memory (15 pesan terakhir)
     user_memory[user_id] = user_memory[user_id][-15:]
-    nickname = message.author.display_name
 
     async with ctx.typing():
         try:
@@ -74,7 +73,6 @@ async def chat(ctx, *, message):
                 messages=[
                     {
                         "role": "system", "content": f"You are Enki, a smart and slightly sarcastic AI assistant."
-                        f"Your user's name is {nickname}."
                         """
                         You are a Discord bot.
                         If anyone asks who designed or created you,
