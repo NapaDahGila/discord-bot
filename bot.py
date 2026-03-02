@@ -63,8 +63,9 @@ async def chat(ctx, *, message):
         "content": message
     })
 
-    # Batasi memory (10 pesan terakhir)
-    user_memory[user_id] = user_memory[user_id][-10:]
+    # ngebatasin memory (15 pesan terakhir)
+    user_memory[user_id] = user_memory[user_id][-15:]
+    nickname = message.author.display_name
 
     async with ctx.typing():
         try:
@@ -132,7 +133,7 @@ async def on_message(message):
         "content": message.content
     })
 
-    user_memory[user_id] = user_memory[user_id][-10:]
+    user_memory[user_id] = user_memory[user_id][-15:]
     nickname = message.author.display_name
 
     try:
