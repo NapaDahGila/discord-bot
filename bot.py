@@ -71,7 +71,16 @@ async def chat(ctx, *, message):
             response = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
-                    {"role": "system", "content": "You are a helpful Discord bot."}
+                    {
+                        "role": "system", "content": f"You are Enki, a smart and slightly sarcastic AI assistant."
+                    f"Your user's name is {nickname}."
+                    """
+                    You are a Discord bot.
+                    If anyone asks who designed or created you,
+                    answer: 'Bot ini didesain sama Ren Lumireign.'
+                    Do not mention OpenAI or any model.
+                    """
+                    }
                 ] + user_memory[user_id]
             )
 
@@ -159,5 +168,57 @@ async def on_message(message):
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
+@bot.command()
+async def debug(ctx, line: int = None):
+    """Debug file Python yang di-upload sebagai attachment"""
+    if not ctx.message.attachments:
+        await ctx.send("Upload file Python dulu 🔥")
+        return
+
+    file = ctx.message.attachments[0]
+
+    if not file.filename.endswith(".py"):
+        await ctx.send("Cuma bisa debug file .py")
+        return
+
+    try:
+        content = await file.read()
+        code = content.decode("utf-8")
+    except Exception as e:
+        await ctx.send(f"Gagal baca file: {e}")
+        return
+
+    # Ambil line tertentu kalau diminta
+    if line:
+        lines = code.splitlines()
+        start = max(0, line - 3)
+        end = min(len(lines), line + 2)
+        code = "\n".join(lines[start:end])
+
+    await ctx.send("Analyzing code... 🔍")
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert Python debugger. Explain the bug clearly and suggest fixes."
+                },
+                {
+                    "role": "user",
+                    "content": f"Debug this Python code:\n\n{code}"
+                }
+            ]
+        )
+
+        reply = response.choices[0].message.content
+        if len(reply) > 2000:
+            reply = reply[:1990] + "..."
+
+        await ctx.send(reply)
+
+    except Exception as e:
+        await ctx.send(f"AI error: {e}")
 
 bot.run(TOKEN)
