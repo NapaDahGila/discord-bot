@@ -101,6 +101,8 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    await bot.process_commands(message)
+
     text = message.content.lower()
 
     if is_creator_question(text):
@@ -157,6 +159,5 @@ async def on_message(message):
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
-    await bot.process_commands(message)
 
 bot.run(TOKEN)
