@@ -432,7 +432,37 @@ async def setprefix(ctx, prefix: str):
     )
     await ctx.send(embed=embed)
 
-
+#buat cek statistik udah pake enki berapa lama
+@bot.command()
+async def stats(ctx):
+    user_id = str(ctx.author.id)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # total pesan user
+    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ?", (user_id,))
+    total = c.fetchone()[0]
+    
+    # total pesan user ke AI (role user)
+    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'user'", (user_id,))
+    total_user = c.fetchone()[0]
+    
+    # total balasan AI
+    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'assistant'", (user_id,))
+    total_ai = c.fetchone()[0]
+    
+    conn.close()
+    
+    embed = discord.Embed(
+        title="📊 Stats Kamu",
+        color=0x00ff99
+    )
+    embed.add_field(name="Total Pesan", value=f"`{total}`", inline=True)
+    embed.add_field(name="Pesan Kamu", value=f"`{total_user}`", inline=True)
+    embed.add_field(name="Balasan Enki", value=f"`{total_ai}`", inline=True)
+    embed.set_footer(text=f"Stats untuk {ctx.author.display_name}")
+    
+    await ctx.send(embed=embed)
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
