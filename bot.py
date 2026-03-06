@@ -343,7 +343,6 @@ async def review(ctx, *, question: str = None):
                             "Don't just find bugs — review code quality, readability, "
                             "best practices, and suggest improvements. "
                             "Be constructive and specific."
-                            "balas pakai bahasa indonesia, ga harus sopan."
                         )
                     },
                     {
