@@ -279,6 +279,7 @@ async def roast(ctx):
                             "Roast this code brutally but keep it humorous. "
                             "Point out bad practices, ugly code, and amateur mistakes "
                             "in a funny way. Be mean but still educational."
+                            "balas pakai bahasa indonesia."
                         )
                     },
                     {
