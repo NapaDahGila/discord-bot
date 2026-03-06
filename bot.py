@@ -15,8 +15,6 @@ client = Groq(api_key=GROQ_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=get_prefix, intents=intents)
-
 START_TIME = time.time()
 
 # ===== MEMORY SYSTEM (SQLite) =====
@@ -99,7 +97,7 @@ def set_prefix(guild_id: str, prefix: str):
     conn.close()
 
 
-
+bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 # ==========================
 
 
