@@ -279,7 +279,7 @@ async def roast(ctx):
                             "Roast this code brutally but keep it humorous. "
                             "Point out bad practices, ugly code, and amateur mistakes "
                             "in a funny way. Be mean but still educational."
-                            "balas pakai bahasa indonesia."
+                            "balas pakai bahasa indonesia, ga harus sopan."
                         )
                     },
                     {
@@ -343,7 +343,7 @@ async def review(ctx, *, question: str = None):
                             "Don't just find bugs — review code quality, readability, "
                             "best practices, and suggest improvements. "
                             "Be constructive and specific."
-                            "balas pakai bahasa indonesia."
+                            "balas pakai bahasa indonesia, ga harus sopan."
                         )
                     },
                     {
