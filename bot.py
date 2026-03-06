@@ -15,7 +15,7 @@ client = Groq(api_key=GROQ_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="e!", intents=intents)
 
 START_TIME = time.time()
 
