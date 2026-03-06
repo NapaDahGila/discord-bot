@@ -231,6 +231,11 @@ async def debug(ctx, *, question: str = None):
             reply = response.choices[0].message.content
             if len(reply) > 2000:
                 reply = reply[:1990] + "..."
+            else:
+                import io
+                file_output = io.BytesIO(reply.encode("utf-8"))
+                await ctx.reply("Hasil debug terlalu panjang, nih filenya 📄",file=discord.File(file_output, filename="debug_result.txt")
+    )
 
             await ctx.reply(reply)  # reply ke message user, bukan kirim baru
 
