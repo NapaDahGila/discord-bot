@@ -4,6 +4,10 @@ import io
 import sqlite3
 import time
 import discord
+import pytz
+from datetime import datetime
+from datetime import datetime
+import pytz
 from discord.ext import commands
 from groq import Groq
 
@@ -127,6 +131,11 @@ async def chat(ctx, *, message):
     save_message(user_id, "user", message)
     history = load_memory(user_id)
 
+    
+    wib = pytz.timezone("Asia/Jakarta")
+    sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
+
+
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
@@ -182,6 +191,9 @@ async def on_message(message):
 
     save_message(user_id, "user", message.content)
     history = load_memory(user_id)
+
+    wib = pytz.timezone("Asia/Jakarta")
+    sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
     try:
         response = client.chat.completions.create(
