@@ -378,8 +378,14 @@ async def uptime(ctx):
     minutes = (uptime_seconds % 3600) // 60
     seconds = uptime_seconds % 60
     
-    await ctx.send(f"⏱️ Enki udah nyala selama **{hours}j {minutes}m {seconds}d**")
-
+    embed = discord.Embed(
+        title="⏱️ Uptime Enki",
+        description=f"**{days}h {hours}j {minutes}m {seconds}d**",
+        color=0x00ff99  # warna hijau, bisa diganti
+    )
+    embed.set_footer(text="Enki v1.0")
+    
+    await ctx.send(embed=embed)
 
 
 if not TOKEN:
