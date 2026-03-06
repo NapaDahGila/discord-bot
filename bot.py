@@ -303,7 +303,69 @@ async def roast(ctx):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
+@bot.command()
+async def review(ctx, *, question: str = None):
+    """Review code Python yang di-upload"""
+    if not ctx.message.attachments:
+        await ctx.send("Upload file Python dulu 📎")
+        return
 
+    file = ctx.message.attachments[0]
+
+    if not file.filename.endswith(".py"):
+        await ctx.send("Cuma bisa review file `.py`")
+        return
+
+    if file.size > 50_000:
+        await ctx.send("File terlalu besar (max 50KB)")
+        return
+
+    try:
+        content = await file.read()
+        code = content.decode("utf-8")
+    except Exception as e:
+        await ctx.send(f"Gagal baca file: {e}")
+        return
+
+    user_prompt = f"Review this Python code:\n\n```python\n{code}\n```"
+    if question:
+        user_prompt += f"\n\nFokus ke: {question}"
+
+    async with ctx.typing():
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an expert Python code reviewer. "
+                            "Don't just find bugs — review code quality, readability, "
+                            "best practices, and suggest improvements. "
+                            "Be constructive and specific."
+                            "balas pakai bahasa indonesia."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ]
+            )
+
+            reply = response.choices[0].message.content
+
+            if len(reply) <= 2000:
+                await ctx.reply(reply)
+            else:
+                file_output = io.BytesIO(reply.encode("utf-8"))
+                await ctx.reply(
+                    "Hasil review terlalu panjang, nih filenya 📄",
+                    file=discord.File(file_output, filename="review_result.txt")
+                )
+
+        except Exception as e:
+            await ctx.reply(f"AI error: {e}")
 
 
 if not TOKEN:
