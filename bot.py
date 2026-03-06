@@ -15,7 +15,7 @@ client = Groq(api_key=GROQ_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="e!", intents=intents)
+bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
 START_TIME = time.time()
 
@@ -32,6 +32,12 @@ def init_db():
             user_id   TEXT NOT NULL,
             role      TEXT NOT NULL,
             content   TEXT NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS prefixes (
+            guild_id  TEXT PRIMARY KEY,
+            prefix    TEXT NOT NULL DEFAULT '!'
         )
     """)
     conn.commit()
@@ -71,6 +77,29 @@ def save_message(user_id: str, role: str, content: str):
 
 init_db()
 
+#save prefix
+def get_prefix(bot, message):
+    if not message.guild:
+        return "!"
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else "!"
+
+def set_prefix(guild_id: str, prefix: str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO prefixes (guild_id, prefix) VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
+    """, (guild_id, prefix, prefix))
+    conn.commit()
+    conn.close()
+
+
+
 # ==========================
 
 
@@ -78,7 +107,7 @@ init_db()
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
 
-
+#buat ngeping
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong 🏓")
@@ -87,7 +116,7 @@ def is_creator_question(text):
     keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
     return any(k in text for k in keywords)
 
-
+#buat kalo !chat ai bakal bales
 @bot.command()
 async def chat(ctx, *, message):
 
@@ -132,6 +161,7 @@ async def chat(ctx, *, message):
             print("ERROR:", e)
             await ctx.send("AI error 😅")
 
+#buat khusus channel namanya "enki" auto reply
 @bot.event
 async def on_message(message):
 
@@ -183,6 +213,7 @@ async def on_message(message):
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
+#buat benerin codingan
 @bot.command()
 async def debug(ctx, *, question: str = None):
     """Debug file Python yang di-upload sebagai attachment"""
@@ -224,7 +255,7 @@ async def debug(ctx, *, question: str = None):
                             "You are an expert Python debugger. "
                             "Identify bugs clearly, explain why it's a bug, "
                             "and provide the fixed code with short explanation."
-                        )
+                        ) # yang bagian ini bisa di ganti, "content" 
                     },
                     {
                         "role": "user",
@@ -247,6 +278,7 @@ async def debug(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
+#buat ngeroasting codingan
 @bot.command()
 async def roast(ctx):
     """Roast code Python yang di-upload"""
@@ -307,6 +339,7 @@ async def roast(ctx):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
+#buat ngereview hasil codingan
 @bot.command()
 async def review(ctx, *, question: str = None):
     """Review code Python yang di-upload"""
@@ -370,6 +403,7 @@ async def review(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
+#buat cek berapa lama bot udah on
 @bot.command()
 async def uptime(ctx):
     uptime_seconds = int(time.time() - START_TIME)
@@ -387,6 +421,19 @@ async def uptime(ctx):
     embed.set_footer(text="Enki v1.0")
     
     await ctx.send(embed=embed)
+
+#buat set prefix
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setprefix(ctx, prefix: str):
+    set_prefix(str(ctx.guild.id), prefix)
+    embed = discord.Embed(
+        title="✅ Prefix Updated",
+        description=f"Prefix sekarang: `{prefix}`",
+        color=0x00ff99
+    )
+    await ctx.send(embed=embed)
+
 
 
 if not TOKEN:
