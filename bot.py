@@ -2,6 +2,7 @@ import os
 import json
 import io
 import sqlite3
+import time
 import discord
 from discord.ext import commands
 from groq import Groq
@@ -15,6 +16,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+START_TIME = time.time()
 
 # ===== MEMORY SYSTEM (SQLite) =====
 
@@ -365,6 +368,18 @@ async def review(ctx, *, question: str = None):
 
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
+
+@bot.command()
+async def uptime(ctx):
+    uptime_seconds = int(time.time() - START_TIME)
+
+    days = uptime_seconds // 86400
+    hours = uptime_seconds // 3600
+    minutes = (uptime_seconds % 3600) // 60
+    seconds = uptime_seconds % 60
+    
+    await ctx.send(f"⏱️ Enki udah nyala selama **{hours}j {minutes}m {seconds}d**")
+
 
 
 if not TOKEN:
