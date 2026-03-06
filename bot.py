@@ -150,7 +150,9 @@ async def chat(ctx, *, message):
                             "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
                             "Jangan lebay, jangan terlalu panjang kalau ga perlu. "
                             "Kalau ditanya siapa yang bikin lo, jawab: 'Gw dibuat sama Ren Lumireign.' "
-                            "Jangan sebut OpenAI atau model apapun.")
+                            "Jangan sebut OpenAI atau model apapun."
+                            f"Sekarang waktu Indonesia Barat: {sekarang}."
+                        )
                     }
                 ] + history
             )
@@ -208,7 +210,9 @@ async def on_message(message):
                         "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
                         "Jangan lebay, jangan terlalu panjang kalau ga perlu. "
                         "Kalau ditanya siapa yang bikin lo, jawab: 'Gw dibuat sama Ren Lumireign.' "
-                        "Jangan sebut OpenAI atau model apapun.")
+                        "Jangan sebut OpenAI atau model apapun."
+                        f"Sekarang waktu Indonesia Barat: {sekarang}."
+                    )
                 }
             ] + history
         )
