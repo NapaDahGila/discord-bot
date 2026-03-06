@@ -237,4 +237,7 @@ async def debug(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-bot.run(TOKEN)
+if not TOKEN:
+    print("ERROR: TOKEN tidak ditemukan!")
+else:
+    bot.run(TOKEN)
