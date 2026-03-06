@@ -243,6 +243,68 @@ async def debug(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
+@bot.command()
+async def roast(ctx):
+    """Roast code Python yang di-upload"""
+    if not ctx.message.attachments:
+        await ctx.send("Upload file Python dulu biar gw hajar 😈")
+        return
+
+    file = ctx.message.attachments[0]
+
+    if not file.filename.endswith(".py"):
+        await ctx.send("Cuma bisa roast file `.py`")
+        return
+
+    if file.size > 50_000:
+        await ctx.send("File terlalu besar (max 50KB)")
+        return
+
+    try:
+        content = await file.read()
+        code = content.decode("utf-8")
+    except Exception as e:
+        await ctx.send(f"Gagal baca file: {e}")
+        return
+
+    async with ctx.typing():
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": ("Kamu adalah roaster kode yang savage tapi lucu. "
+                                    "Roast kode ini dengan brutal tapi tetap menghibur. "
+                                    "Tunjukkin bad practices, kode jelek, dan kesalahan amatir "
+                                    "dengan cara yang lucu. Boleh kejam tapi tetap edukatif. "
+                                    "Gunakan bahasa Indonesia, boleh campur sedikit bahasa gaul."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Roast this code:\n\n```python\n{code}\n```"
+                    }
+                ]
+            )
+
+            reply = response.choices[0].message.content
+
+            if len(reply) <= 2000:
+                await ctx.reply(reply)
+            else:
+                file_output = io.BytesIO(reply.encode("utf-8"))
+                await ctx.reply(
+                    "Roastannya panjang banget, nih filenya 🔥",
+                    file=discord.File(file_output, filename="roast_result.txt")
+                )
+
+        except Exception as e:
+            await ctx.reply(f"AI error: {e}")
+
+
+
+
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
