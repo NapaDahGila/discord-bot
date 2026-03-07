@@ -489,14 +489,14 @@ async def cuaca(ctx, *, kota: str):
         return
 
     async with aiohttp.ClientSession() as session:
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id"
-    async with session.get(url) as resp:
-        print(f"Status: {resp.status}")  # ← tambahin ini
-        print(f"URL: {url}")             # ← sama ini
-        if resp.status != 200:
-            await ctx.send(f"Kota `{kota}` ga ketemu 😅")
-            return
-        data = await resp.json()
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id"
+        async with session.get(url) as resp:
+            print(f"Status: {resp.status}")  # ← tambahin ini
+            print(f"URL: {url}")             # ← sama ini
+            if resp.status != 200:
+                await ctx.send(f"Kota `{kota}` ga ketemu 😅")
+                return
+            data = await resp.json()
 
     cuaca_desc = data["weather"][0]["description"]
     suhu = data["main"]["temp"]
