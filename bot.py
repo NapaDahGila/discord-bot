@@ -190,8 +190,6 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    bot.process_commands(message):
-# cek mention
     if message.mentions:
         for user in message.mentions:
             if user.id in afk_users:
@@ -204,6 +202,7 @@ async def on_message(message):
             description=f"Welcome back {message.author.display_name}! AFK kamu udah dihapus 👋",color=0x00ff99)
         await message.channel.send(embed=embed)
 
+    bot.process_commands(message):
     await bot.process_commands(message)
 
     text = message.content.lower()
