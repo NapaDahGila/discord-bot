@@ -175,6 +175,7 @@ bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 @bot.event
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
+    asyncio.ensure_future(cek_reminder())
 
 #buat ngeping(!ping)
 @bot.command()
@@ -788,5 +789,4 @@ async def remind(ctx, waktu: str, *, pesan: str):
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
-    bot.loop.create_task(cek_reminder())
     bot.run(TOKEN)
