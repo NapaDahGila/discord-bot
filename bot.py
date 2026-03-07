@@ -54,6 +54,15 @@ def init_db():
         games     INTEGER DEFAULT 0
     )
 """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS reminders (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     TEXT NOT NULL,
+        channel_id  TEXT NOT NULL,
+        pesan       TEXT NOT NULL,
+        waktu       REAL NOT NULL
+    )
+""")
     conn.commit()
     conn.close()
 
@@ -116,6 +125,24 @@ def get_leaderboard():
     conn.close()
     return rows
 
+async def cek_reminder():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        sekarang = time.time()
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT id, user_id, channel_id, pesan FROM reminders WHERE waktu <= ?", (sekarang,))
+        rows = c.fetchall()
+        for row in rows:
+            id, user_id, channel_id, pesan = row
+            channel = bot.get_channel(int(channel_id))
+            if channel:
+                await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
+            c.execute("DELETE FROM reminders WHERE id = ?", (id,))
+        conn.commit()
+        conn.close()
+        await asyncio.sleep(1)
+
 init_db()
 afk_users = {}
 
@@ -149,7 +176,7 @@ bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
 
-#buat ngeping
+#buat ngeping(!ping)
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong 🏓")
@@ -532,6 +559,7 @@ async def stats(ctx):
     
     await ctx.send(embed=embed)
 
+#untuk cek cuaca (!cuaca [kota])
 @bot.command()
 async def cuaca(ctx, *, kota: str):
     if not WEATHER_KEY:
@@ -568,6 +596,7 @@ async def cuaca(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
+#buat translate bahasa indo ke bahasa asing (!translate [wajib dua huruf negara yang mau, misal ja(jepang) en(inggris)] baru bahasa)
 @bot.command()
 async def translate(ctx, bahasa: str, *, teks: str):
     """Translate teks ke bahasa lain"""
@@ -591,6 +620,7 @@ async def translate(ctx, bahasa: str, *, teks: str):
     
     await ctx.send(embed=embed)
 
+#tanya apa apa (!ball gw ganteng ga?)
 @bot.command()
 async def ball(ctx, *, pertanyaan: str):
     jawaban = [
@@ -629,6 +659,7 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
+#minigame wack, (pencet emojinya)
 @bot.command()
 async def wack(ctx):
     import asyncio
@@ -689,7 +720,7 @@ async def wack(ctx):
 
     await ctx.send(embed=embed)
 
-
+#buat ngecek leaderboard minigame wack
 @bot.command()
 async def leaderboard(ctx):
     data = get_leaderboard()
@@ -714,8 +745,48 @@ async def leaderboard(ctx):
 
     await ctx.send(embed=embed)
 
+#buat reminder (!reminder XD/J/H pesan)
+@bot.command()
+async def remind(ctx, waktu: str, *, pesan: str):
+    # parse waktu
+    satuan = waktu[-1]
+    try:
+        angka = int(waktu[:-1])
+    except:
+        await ctx.send("Format waktu salah! Contoh: `!remind 10m makan siang` atau `!remind 1h tidur`")
+        return
+
+    if satuan == "s":
+        detik = angka
+    elif satuan == "m":
+        detik = angka * 60
+    elif satuan == "h":
+        detik = angka * 3600
+    else:
+        await ctx.send("Satuan waktu: `s` (detik), `m` (menit), `h` (jam)")
+        return
+
+    waktu_remind = time.time() + detik
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
+        (str(ctx.author.id), str(ctx.channel.id), pesan, waktu_remind)
+    )
+    conn.commit()
+    conn.close()
+
+    embed = discord.Embed(
+        title="⏰ Reminder Set!",
+        description=f"Gw bakal ingetin lo: **{pesan}**",
+        color=0x00ff99
+    )
+    embed.set_footer(text=f"dalam {waktu}")
+    await ctx.send(embed=embed)
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
+    bot.loop.create_task(cek_reminder())
     bot.run(TOKEN)
