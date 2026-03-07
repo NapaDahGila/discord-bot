@@ -518,6 +518,29 @@ async def cuaca(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
+@bot.command()
+async def translate(ctx, bahasa: str, *, teks: str):
+    """Translate teks ke bahasa lain"""
+    async with aiohttp.ClientSession() as session:
+        url = f"https://api.mymemory.translated.net/get?q={teks}&langpair=id|{bahasa}"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send("Gagal translate 😅")
+                return
+            data = await resp.json()
+
+    hasil = data["responseData"]["translatedText"]
+    
+    embed = discord.Embed(
+        title="🌐 Translate",
+        color=0x00ff99
+    )
+    embed.add_field(name="Teks Asli", value=f"`{teks}`", inline=False)
+    embed.add_field(name="Hasil", value=f"`{hasil}`", inline=False)
+    embed.set_footer(text=f"id → {bahasa}")
+    
+    await ctx.send(embed=embed)
+
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
