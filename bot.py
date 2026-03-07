@@ -929,7 +929,7 @@ async def serverinfo(ctx):
         title=f"📊 Info Server {guild.name}",
         color=0x00ff99
     )
-    embed.add_field(name="👑 Owner", value=guild.owner.display_name, inline=True)
+    embed.add_field(name="👑 Owner ID", value=f"`{guild.owner_id}`", inline
     embed.add_field(name="👥 Member", value=f"`{guild.member_count}`", inline=True)
     embed.add_field(name="📅 Dibuat", value=guild.created_at.strftime("%d %B %Y"), inline=True)
     embed.add_field(name="💬 Channel", value=f"`{len(guild.channels)}`", inline=True)
