@@ -71,6 +71,14 @@ def init_db():
         selesai   INTEGER DEFAULT 0
     )
 """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS notes (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id   TEXT NOT NULL,
+        judul     TEXT NOT NULL,
+        isi       TEXT NOT NULL
+    )
+""")
     conn.commit()
     conn.close()
 
@@ -849,6 +857,69 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
 
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `done`, `delete`")
+
+@bot.command()
+async def note(ctx, aksi: str, *, konten: str = None):
+    user_id = str(ctx.author.id)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    # tambah catatan
+    if aksi == "add":
+        if not konten:
+            await ctx.send("Format: `!note add judul | isi catatan`")
+            return
+        if "|" not in konten:
+            await ctx.send("Pisahin judul dan isi pake `|` ya! `!note add judul | isi catatan`")
+            return
+        judul, isi = konten.split("|", 1)
+        c.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)", (user_id, judul.strip(), isi.strip()))
+        conn.commit()
+        conn.close()
+        embed = discord.Embed(description=f"📝 Catatan **{judul.strip()}** disimpan!", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    # lihat semua catatan
+    elif aksi == "list":
+        c.execute("SELECT id, judul FROM notes WHERE user_id = ?", (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            await ctx.send("Belum ada catatan 😴")
+            return
+        embed = discord.Embed(title="📒 Catatan Kamu", color=0x00ff99)
+        for id, judul in rows:
+            embed.add_field(name=f"#{id}", value=judul, inline=False)
+        await ctx.send(embed=embed)
+
+    # lihat isi catatan
+    elif aksi == "get":
+        if not konten:
+            await ctx.send("Masukkin ID catatan! `!note get 1`")
+            return
+        c.execute("SELECT judul, isi FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            await ctx.send("Catatan ga ketemu 😅")
+            return
+        judul, isi = row
+        embed = discord.Embed(title=f"📝 {judul}", description=isi, color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    # hapus catatan
+    elif aksi == "delete":
+        if not konten:
+            await ctx.send("Masukkin ID catatan! `!note delete 1`")
+            return
+        c.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
+        conn.commit()
+        conn.close()
+        embed = discord.Embed(description=f"🗑️ Catatan #{konten} dihapus!", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    else:
+        await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `get`, `delete`")
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
