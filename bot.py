@@ -6,6 +6,7 @@ import time
 import discord
 import aiohttp
 import random
+import asyncio
 import pytz
 from datetime import datetime
 from discord.ext import commands
@@ -44,6 +45,15 @@ def init_db():
             prefix    TEXT NOT NULL DEFAULT '!'
         )
     """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS wack_scores (
+        user_id   TEXT PRIMARY KEY,
+        username  TEXT NOT NULL,
+        best      INTEGER DEFAULT 0,
+        total     INTEGER DEFAULT 0,
+        games     INTEGER DEFAULT 0
+    )
+""")
     conn.commit()
     conn.close()
 
@@ -82,6 +92,29 @@ def save_message(user_id: str, role: str, content: str):
     """, (user_id, user_id))
     conn.commit()
     conn.close()
+
+def save_wack_score(user_id: str, username: str, skor: int, total: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO wack_scores (user_id, username, best, total, games)
+        VALUES (?, ?, ?, ?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username = ?,
+            best = MAX(best, ?),
+            total = total + ?,
+            games = games + 1
+    """, (user_id, username, skor, skor, username, skor, skor))
+    conn.commit()
+    conn.close()
+
+def get_leaderboard():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT username, best, total, games FROM wack_scores ORDER BY best DESC LIMIT 10")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 init_db()
 afk_users = {}
@@ -596,6 +629,87 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
+@bot.command()
+async def wack(ctx):
+    
+    skor = 0
+    ronde = 5
+
+    await ctx.send("🎮 **Whack-a-Mole dimulai!** Klik reaction 🐭 secepat mungkin!\n3...")
+    await asyncio.sleep(1)
+    await ctx.send("2...")
+    await asyncio.sleep(1)
+    await ctx.send("1...")
+    await asyncio.sleep(1)
+
+    for i in range(ronde):
+        # posisi tikus random dari 5 lubang
+        posisi = random.randint(0, 4)
+        lubang = ["🕳️", "🕳️", "🕳️", "🕳️", "🕳️"]
+        lubang[posisi] = "🐭"
+
+        papan = " ".join(lubang)
+        pesan = await ctx.send(f"**Ronde {i+1}/{ronde}**\n{papan}")
+
+        # tambahin reaction sesuai posisi
+        reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+        for r in reactions:
+            await pesan.add_reaction(r)
+
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in reactions and reaction.message.id == pesan.id
+
+        try:
+            reaction, user = await bot.wait_for("reaction_add", timeout=3.0, check=check)
+            if reactions.index(str(reaction.emoji)) == posisi:
+                skor += 1
+                await ctx.send(f"✅ Bener! +1 | Skor: {skor}")
+            else:
+                await ctx.send(f"❌ Salah! Tikusnya di {reactions[posisi]}")
+        except asyncio.TimeoutError:
+            await ctx.send(f"⏱️ Timeout! Tikusnya di {reactions[posisi]}")
+
+        await asyncio.sleep(1)
+
+    embed = discord.Embed(
+        title="🎮 Game Selesai!",
+        description=f"Skor akhir: **{skor}/{ronde}**",
+        color=0x00ff99
+    )
+    if skor == ronde:
+        embed.set_footer(text="Sempurna! 🏆")
+    elif skor >= ronde // 2:
+        embed.set_footer(text="Lumayan! 👍")
+    else:
+        embed.set_footer(text="Latihan lagi bro 😂")
+
+    save_wack_score(str(ctx.author.id), ctx.author.display_name, skor, ronde)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def leaderboard(ctx):
+    data = get_leaderboard()
+
+    if not data:
+        await ctx.send("Belum ada yang main `!wack` 😅")
+        return
+
+    embed = discord.Embed(
+        title="🏆 Leaderboard Whack-a-Mole",
+        color=0x00ff99
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (username, best, total, games) in enumerate(data):
+        medal = medals[i] if i < 3 else f"`{i+1}.`"
+        embed.add_field(
+            name=f"{medal} {username}",
+            value=f"Best: `{best}` | Total: `{total}` | Games: `{games}`",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
 
 
 if not TOKEN:
