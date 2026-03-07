@@ -566,6 +566,9 @@ async def ball(ctx, *, pertanyaan: str):
     )
     embed.add_field(name="Pertanyaan", value=f"`{pertanyaan}`", inline=False)
     embed.add_field(name="Jawaban", value=hasil, inline=False)
+    await ctx.send(embed=embed)
+
+
 
 
 
