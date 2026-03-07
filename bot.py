@@ -5,6 +5,7 @@ import sqlite3
 import time
 import discord
 import aiohttp
+import random
 import pytz
 from datetime import datetime
 from datetime import datetime
@@ -540,6 +541,35 @@ async def translate(ctx, bahasa: str, *, teks: str):
     embed.set_footer(text=f"id → {bahasa}")
     
     await ctx.send(embed=embed)
+
+@bot.command()
+async def ball(ctx, *, pertanyaan: str):
+    jawaban = [
+        "Iya, pasti! 🎱",
+        "Kemungkinan besar iya.",
+        "Tanda-tandanya bagus.",
+        "Coba lagi nanti 🤔",
+        "Ga bisa dipastiin sekarang.",
+        "Jangan terlalu berharap 😅",
+        "Ga mungkin.",
+        "Kayaknya sih ngga.",
+        "Absolutely not 💀",
+        "Bro yakin mau tau jawabannya? 😂",
+        "Tanya lagi nanti, gw lagi males mikir.",
+        "Hmm... iya deh, tapi jangan nyalahin gw kalo salah.",
+        "Tanya yang lain deh",
+    ]
+
+    hasil = random.choice(jawaban)
+
+    embed = discord.Embed(
+        title="🎱 8Ball",
+        color=0x00ff99
+    )
+    embed.add_field(name="Pertanyaan", value=f"`{pertanyaan}`", inline=False)
+    embed.add_field(name="Jawaban", value=hasil, inline=False)
+
+
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
