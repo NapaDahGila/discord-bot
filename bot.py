@@ -63,6 +63,14 @@ def init_db():
         waktu       REAL NOT NULL
     )
 """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS todos (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id   TEXT NOT NULL,
+        tugas     TEXT NOT NULL,
+        selesai   INTEGER DEFAULT 0
+    )
+""")
     conn.commit()
     conn.close()
 
@@ -785,6 +793,62 @@ async def remind(ctx, waktu: str, *, pesan: str):
     )
     embed.set_footer(text=f"dalam {waktu}")
     await ctx.send(embed=embed)
+
+@bot.command()
+async def todo(ctx, aksi: str, *, tugas: str = None):
+    user_id = str(ctx.author.id)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    # tambah tugas
+    if aksi == "add":
+        if not tugas:
+            await ctx.send("Tugas nya apa? `!todo add belajar python`")
+            return
+        c.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, tugas))
+        conn.commit()
+        conn.close()
+        embed = discord.Embed(description=f"✅ Ditambahin: **{tugas}**", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    # lihat semua tugas
+    elif aksi == "list":
+        c.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            await ctx.send("Todo list kamu kosong 😴")
+            return
+        embed = discord.Embed(title="📋 Todo List", color=0x00ff99)
+        for id, tugas, selesai in rows:
+            status = "✅" if selesai else "⬜"
+            embed.add_field(name=f"{status} #{id}", value=tugas, inline=False)
+        await ctx.send(embed=embed)
+
+    # tandai selesai
+    elif aksi == "done":
+        if not tugas:
+            await ctx.send("Masukkin ID tugasnya! `!todo done 1`")
+            return
+        c.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (tugas, user_id))
+        conn.commit()
+        conn.close()
+        embed = discord.Embed(description=f"✅ Tugas #{tugas} selesai!", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    # hapus tugas
+    elif aksi == "delete":
+        if not tugas:
+            await ctx.send("Masukkin ID tugasnya! `!todo delete 1`")
+            return
+        c.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (tugas, user_id))
+        conn.commit()
+        conn.close()
+        embed = discord.Embed(description=f"🗑️ Tugas #{tugas} dihapus!", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    else:
+        await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `done`, `delete`")
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
