@@ -8,8 +8,6 @@ import aiohttp
 import random
 import pytz
 from datetime import datetime
-from datetime import datetime
-import pytz
 from discord.ext import commands
 from groq import Groq
 
