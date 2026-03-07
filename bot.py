@@ -921,6 +921,46 @@ async def note(ctx, aksi: str, *, konten: str = None):
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `get`, `delete`")
 
+@bot.command()
+async def serverinfo(ctx):
+    guild = ctx.guild
+    
+    embed = discord.Embed(
+        title=f"📊 Info Server {guild.name}",
+        color=0x00ff99
+    )
+    embed.add_field(name="👑 Owner", value=guild.owner.display_name, inline=True)
+    embed.add_field(name="👥 Member", value=f"`{guild.member_count}`", inline=True)
+    embed.add_field(name="📅 Dibuat", value=guild.created_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="💬 Channel", value=f"`{len(guild.channels)}`", inline=True)
+    embed.add_field(name="🎭 Roles", value=f"`{len(guild.roles)}`", inline=True)
+    embed.add_field(name="😀 Emoji", value=f"`{len(guild.emojis)}`", inline=True)
+    
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def userinfo(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    
+    embed = discord.Embed(
+        title=f"👤 Info User {member.display_name}",
+        color=0x00ff99
+    )
+    embed.add_field(name="🏷️ Username", value=f"`{member.name}`", inline=True)
+    embed.add_field(name="🆔 ID", value=f"`{member.id}`", inline=True)
+    embed.add_field(name="📅 Akun Dibuat", value=member.created_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="📥 Join Server", value=member.joined_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="🎭 Roles", value=", ".join([r.name for r in member.roles[1:]]) or "Tidak ada", inline=False)
+    
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
+    
+    await ctx.send(embed=embed)
+
+
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
