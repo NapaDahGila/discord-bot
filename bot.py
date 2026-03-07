@@ -4,6 +4,7 @@ import io
 import sqlite3
 import time
 import discord
+import aiohttp
 import pytz
 from datetime import datetime
 from datetime import datetime
@@ -13,6 +14,7 @@ from groq import Groq
 
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
+WEATHER_KEY = os.getenv("WEATHER_KEY")
 
 client = Groq(api_key=GROQ_KEY)
 
@@ -478,6 +480,40 @@ async def stats(ctx):
     embed.add_field(name="Balasan Enki", value=f"`{total_ai}`", inline=True)
     embed.set_footer(text=f"Stats untuk {ctx.author.display_name}")
     
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def cuaca(ctx, *, kota: str):
+    if not WEATHER_KEY:
+        await ctx.send("API key cuaca belum diset.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send(f"Kota `{kota}` ga ketemu 😅")
+                return
+            data = await resp.json()
+
+    cuaca_desc = data["weather"][0]["description"]
+    suhu = data["main"]["temp"]
+    suhu_min = data["main"]["temp_min"]
+    suhu_max = data["main"]["temp_max"]
+    kelembaban = data["main"]["humidity"]
+    angin = data["wind"]["speed"]
+
+    embed = discord.Embed(
+        title=f"🌤️ Cuaca di {kota.title()}",
+        color=0x00ff99
+    )
+    embed.add_field(name="Kondisi", value=f"`{cuaca_desc}`", inline=False)
+    embed.add_field(name="🌡️ Suhu", value=f"`{suhu}°C`", inline=True)
+    embed.add_field(name="🔽 Min", value=f"`{suhu_min}°C`", inline=True)
+    embed.add_field(name="🔼 Max", value=f"`{suhu_max}°C`", inline=True)
+    embed.add_field(name="💧 Kelembaban", value=f"`{kelembaban}%`", inline=True)
+    embed.add_field(name="💨 Angin", value=f"`{angin} m/s`", inline=True)
+
     await ctx.send(embed=embed)
 
 if not TOKEN:
