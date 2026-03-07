@@ -46,6 +46,18 @@ def init_db():
     conn.commit()
     conn.close()
 
+afk_users = {}
+
+@bot.command()
+async def afk(ctx, *, alasan: str = "AFK"):
+    afk_users[ctx.author.id] = alasan
+    embed = discord.Embed(
+        title="💤 AFK",
+        description=f"{ctx.author.display_name} sekarang AFK: `{alasan}`",
+        color=0x00ff99
+    )
+    await ctx.send(embed=embed)
+
 def load_memory(user_id: str, limit: int = 15) -> list:
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -177,6 +189,20 @@ async def on_message(message):
 
     if message.author == bot.user:
         return
+
+    bot.process_commands(message):
+# cek mention
+    if message.mentions:
+        for user in message.mentions:
+            if user.id in afk_users:
+                await message.channel.send(f"⚠️ {user.display_name} lagi AFK: `{afk_users[user.id]}`")
+
+# cek kalo yang AFK balik
+    if message.author.id in afk_users:
+        del afk_users[message.author.id]
+        embed = discord.Embed(
+            description=f"Welcome back {message.author.display_name}! AFK kamu udah dihapus 👋",color=0x00ff99)
+        await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
 
