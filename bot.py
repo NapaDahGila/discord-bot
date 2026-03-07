@@ -26,6 +26,7 @@ START_TIME = time.time()
 
 DB_FILE = "memory.db"
 
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -46,17 +47,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-afk_users = {}
 
-@bot.command()
-async def afk(ctx, *, alasan: str = "AFK"):
-    afk_users[ctx.author.id] = alasan
-    embed = discord.Embed(
-        title="💤 AFK",
-        description=f"{ctx.author.display_name} sekarang AFK: `{alasan}`",
-        color=0x00ff99
-    )
-    await ctx.send(embed=embed)
+
+
 
 def load_memory(user_id: str, limit: int = 15) -> list:
     conn = sqlite3.connect(DB_FILE)
@@ -91,6 +84,7 @@ def save_message(user_id: str, role: str, content: str):
     conn.close()
 
 init_db()
+afk_users = {}
 
 #save prefix
 def get_prefix(bot, message):
@@ -592,7 +586,15 @@ async def ball(ctx, *, pertanyaan: str):
     embed.add_field(name="Jawaban", value=hasil, inline=False)
     await ctx.send(embed=embed)
 
-
+@bot.command()
+async def afk(ctx, *, alasan: str = "AFK"):
+    afk_users[ctx.author.id] = alasan
+    embed = discord.Embed(
+        title="💤 AFK",
+        description=f"{ctx.author.display_name} sekarang AFK: `{alasan}`",
+        color=0x00ff99
+    )
+    await ctx.send(embed=embed)
 
 
 
