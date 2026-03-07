@@ -631,9 +631,10 @@ async def afk(ctx, *, alasan: str = "AFK"):
 
 @bot.command()
 async def wack(ctx):
-    
+    import asyncio
+
     skor = 0
-    ronde = 5
+    ronde = 0
 
     await ctx.send("🎮 **Whack-a-Mole dimulai!** Klik reaction 🐭 secepat mungkin!\n3...")
     await asyncio.sleep(1)
@@ -642,16 +643,15 @@ async def wack(ctx):
     await ctx.send("1...")
     await asyncio.sleep(1)
 
-    for i in range(ronde):
-        # posisi tikus random dari 5 lubang
+    while True:
+        ronde += 1
         posisi = random.randint(0, 4)
         lubang = ["🕳️", "🕳️", "🕳️", "🕳️", "🕳️"]
         lubang[posisi] = "🐭"
 
         papan = " ".join(lubang)
-        pesan = await ctx.send(f"**Ronde {i+1}/{ronde}**\n{papan}")
+        pesan = await ctx.send(f"**Ronde {ronde}** | Skor: {skor}\n{papan}")
 
-        # tambahin reaction sesuai posisi
         reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
         for r in reactions:
             await pesan.add_reaction(r)
@@ -663,29 +663,32 @@ async def wack(ctx):
             reaction, user = await bot.wait_for("reaction_add", timeout=3.0, check=check)
             if reactions.index(str(reaction.emoji)) == posisi:
                 skor += 1
-                await ctx.send(f"✅ Bener! +1 | Skor: {skor}")
+                await ctx.send(f"✅ Bener! Skor: {skor}")
             else:
-                await ctx.send(f"❌ Salah! Tikusnya di {reactions[posisi]}")
+                await ctx.send(f"❌ Salah! Game over! Tikusnya di {reactions[posisi]}")
+                break
         except asyncio.TimeoutError:
-            await ctx.send(f"⏱️ Timeout! Tikusnya di {reactions[posisi]}")
+            await ctx.send(f"⏱️ Timeout! Game over! Tikusnya di {reactions[posisi]}")
+            break
 
         await asyncio.sleep(1)
 
+    save_wack_score(str(ctx.author.id), ctx.author.display_name, skor, ronde)
+
     embed = discord.Embed(
-        title="🎮 Game Selesai!",
-        description=f"Skor akhir: **{skor}/{ronde}**",
+        title="🎮 Game Over!",
+        description=f"Skor akhir: **{skor}**",
         color=0x00ff99
     )
-    if skor == ronde:
-        embed.set_footer(text="Sempurna! 🏆")
-    elif skor >= ronde // 2:
+    if skor >= 20:
+        embed.set_footer(text="Gila sih lu 🏆")
+    elif skor >= 10:
         embed.set_footer(text="Lumayan! 👍")
     else:
         embed.set_footer(text="Latihan lagi bro 😂")
 
-    save_wack_score(str(ctx.author.id), ctx.author.display_name, skor, ronde)
-
     await ctx.send(embed=embed)
+
 
 @bot.command()
 async def leaderboard(ctx):
