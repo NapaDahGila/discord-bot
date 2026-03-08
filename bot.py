@@ -960,6 +960,47 @@ async def userinfo(ctx, member: discord.Member = None):
     
     await ctx.send(embed=embed)
 
+@bot.command()
+async def forecast(ctx, *, kota: str):
+    if not WEATHER_KEY:
+        await ctx.send("API key cuaca belum diset.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        url = f"http://api.openweathermap.org/data/2.5/forecast?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id&cnt=24"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send(f"Kota `{kota}` ga ketemu 😅")
+                return
+            data = await resp.json()
+
+    embed = discord.Embed(
+        title=f"🌤️ Forecast {kota.title()} - 4 Hari",
+        color=0x00ff99
+    )
+
+    # ambil data per hari
+    hari = {}
+    for item in data["list"]:
+        tanggal = item["dt_txt"].split(" ")[0]
+        if tanggal not in hari:
+            hari[tanggal] = {
+                "desc": item["weather"][0]["description"],
+                "suhu_min": item["main"]["temp_min"],
+                "suhu_max": item["main"]["temp_max"],
+            }
+        else:
+            hari[tanggal]["suhu_min"] = min(hari[tanggal]["suhu_min"], item["main"]["temp_min"])
+            hari[tanggal]["suhu_max"] = max(hari[tanggal]["suhu_max"], item["main"]["temp_max"])
+
+    for i, (tanggal, info) in enumerate(list(hari.items())[:4]):
+        embed.add_field(
+            name=f"📅 {tanggal}",
+            value=f"`{info['desc']}`\n🌡️ {info['suhu_min']:.1f}°C - {info['suhu_max']:.1f}°C",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
