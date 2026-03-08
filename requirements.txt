@@ -3,3 +3,4 @@ groq
 pytz
 aiohttp
 libsql-client
+libsql-experimental
