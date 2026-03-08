@@ -15,6 +15,7 @@ from groq import Groq
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
+NEWS_KEY = os.getenv("NEWS_KEY")
 
 client = Groq(api_key=GROQ_KEY)
 
@@ -997,6 +998,66 @@ async def forecast(ctx, *, kota: str):
         embed.add_field(
             name=f"📅 {tanggal}",
             value=f"`{info['desc']}`\n🌡️ {info['suhu_min']:.1f}°C - {info['suhu_max']:.1f}°C",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def calc(ctx, *, ekspresi: str):
+    try:
+        # keamanan — cuma boleh angka dan operator
+        allowed = set("0123456789+-*/(). ")
+        if not all(c in allowed for c in ekspresi):
+            await ctx.send("❌ Cuma boleh angka dan operator `+ - * / ( )`")
+            return
+        
+        hasil = eval(ekspresi)
+        
+        embed = discord.Embed(
+            title="🧮 Kalkulator",
+            color=0x00ff99
+        )
+        embed.add_field(name="Input", value=f"`{ekspresi}`", inline=False)
+        embed.add_field(name="Hasil", value=f"`{hasil}`", inline=False)
+        await ctx.send(embed=embed)
+
+    except ZeroDivisionError:
+        await ctx.send("❌ Ga bisa bagi sama nol 😅")
+    except:
+        await ctx.send("❌ Ekspresi ga valid!")
+
+@bot.command()
+async def news(ctx, *, topik: str = "indonesia"):
+    if not NEWS_KEY:
+        await ctx.send("API key news belum diset.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        url = f"https://newsapi.org/v2/everything?q={topik}&language=id&sortBy=publishedAt&pageSize=5&apiKey={NEWS_KEY}"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send("Gagal ngambil berita 😅")
+                return
+            data = await resp.json()
+
+    articles = data.get("articles", [])
+    if not articles:
+        await ctx.send(f"Ga ada berita tentang `{topik}` 😅")
+        return
+
+    embed = discord.Embed(
+        title=f"📰 Berita Terkini: {topik.title()}",
+        color=0x00ff99
+    )
+
+    for article in articles[:5]:
+        judul = article["title"]
+        sumber = article["source"]["name"]
+        url_berita = article["url"]
+        embed.add_field(
+            name=f"📌 {sumber}",
+            value=f"[{judul}]({url_berita})",
             inline=False
         )
 
