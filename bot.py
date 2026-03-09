@@ -166,7 +166,7 @@ def is_creator_question(text):
     keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
     return any(k in text for k in keywords)
 
-@bot.command()
+@bot.command(help="Chat sama Enki AI", usage="!chat <pesan>")
 async def chat(ctx, *, message):
     if not GROQ_KEY:
         await ctx.send("API key Groq belum diset.")
@@ -489,7 +489,7 @@ async def stats(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Cek cuaca kota tertentu", usage="!cuaca <kota>")
 async def cuaca(ctx, *, kota: str):
     if not WEATHER_KEY:
         await ctx.send("API key cuaca belum diset.")
@@ -520,7 +520,7 @@ async def cuaca(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Translate teks ke bahasa lain", usage="!translate <kode_bahasa> <teks>")
 async def translate(ctx, bahasa: str, *, teks: str):
     async with aiohttp.ClientSession() as session:
         url = f"https://api.mymemory.translated.net/get?q={teks}&langpair=id|{bahasa}"
@@ -653,7 +653,7 @@ async def leaderboard(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Set reminder", usage="!remind <waktu> <pesan> | contoh: !remind 10m makan")
 async def remind(ctx, waktu: str, *, pesan: str):
     satuan = waktu[-1]
     try:
@@ -689,7 +689,7 @@ async def remind(ctx, waktu: str, *, pesan: str):
     embed.set_footer(text=f"dalam {waktu}")
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Todo list — add/list/done/delete", usage="!todo <add/list/done/delete> <tugas>")
 async def todo(ctx, aksi: str, *, tugas: str = None):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -735,7 +735,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `done`, `delete`")
 
-@bot.command()
+@bot.command(help="Simpan catatan — add/list/get/delete", usage="!note <add/list/get/delete> <judul | isi>")
 async def note(ctx, aksi: str, *, konten: str = None):
     user_id = str(ctx.author.id)
     conn = get_db()
