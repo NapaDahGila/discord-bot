@@ -4,3 +4,4 @@ pytz
 aiohttp
 libsql-client
 libsql-experimental
+Pillow
