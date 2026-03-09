@@ -5,6 +5,7 @@ import time
 import discord
 import aiohttp
 import random
+from PIL import Image
 import asyncio
 import pytz
 import libsql_experimental as libsql
@@ -909,6 +910,119 @@ async def news(ctx, *, topik: str = "indonesia"):
         )
 
     await ctx.send(embed=embed)
+
+@bot.command()
+async def convert(ctx, format: str):
+    if not ctx.message.attachments:
+        await ctx.send("Upload foto dulu! 📸")
+        return
+
+    file = ctx.message.attachments[0]
+    format = format.lower().strip(".")
+
+    allowed = ["jpg", "jpeg", "png", "webp", "bmp", "gif"]
+    if format not in allowed:
+        await ctx.send(f"Format ga valid! Pilih: `{', '.join(allowed)}`")
+        return
+
+    try:
+        img_bytes = await file.read()
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # convert RGBA ke RGB kalo mau ke jpg
+        if format in ["jpg", "jpeg"] and img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        output = io.BytesIO()
+        save_format = "JPEG" if format in ["jpg", "jpeg"] else format.upper()
+        img.save(output, format=save_format)
+        output.seek(0)
+
+        await ctx.reply(
+            f"✅ Converted ke `.{format}`!",
+            file=discord.File(output, filename=f"result.{format}")
+        )
+
+    except Exception as e:
+        await ctx.send(f"Gagal convert: {e}")
+
+
+@bot.command()
+async def resize(ctx, width: int, height: int = None):
+    if not ctx.message.attachments:
+        await ctx.send("Upload foto dulu! 📸")
+        return
+
+    file = ctx.message.attachments[0]
+
+    try:
+        img_bytes = await file.read()
+        img = Image.open(io.BytesIO(img_bytes))
+
+        orig_w, orig_h = img.size
+
+        # cek upscale
+        if width > orig_w or (height and height > orig_h):
+            await ctx.send(f"❌ Ga bisa upscale! Ukuran asli: `{orig_w}x{orig_h}`")
+            return
+
+        # kalau height ga dikasih, hitung otomatis biar proporsional
+        if not height:
+            ratio = width / orig_w
+            height = int(orig_h * ratio)
+
+        img = img.resize((width, height), Image.LANCZOS)
+
+        output = io.BytesIO()
+        ext = file.filename.split(".")[-1].lower()
+        save_format = "JPEG" if ext in ["jpg", "jpeg"] else ext.upper()
+        if img.mode in ("RGBA", "P") and save_format == "JPEG":
+            img = img.convert("RGB")
+        img.save(output, format=save_format)
+        output.seek(0)
+
+        await ctx.reply(
+            f"✅ Diresize ke `{width}x{height}`!",
+            file=discord.File(output, filename=f"resized.{ext}")
+        )
+
+    except Exception as e:
+        await ctx.send(f"Gagal resize: {e}")
+
+
+@bot.command()
+async def compress(ctx, quality: int = 60):
+    if not ctx.message.attachments:
+        await ctx.send("Upload foto dulu! 📸")
+        return
+
+    if not 1 <= quality <= 95:
+        await ctx.send("Quality harus antara `1-95` — makin kecil makin compress 😄")
+        return
+
+    file = ctx.message.attachments[0]
+
+    try:
+        img_bytes = await file.read()
+        img = Image.open(io.BytesIO(img_bytes))
+
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        output.seek(0)
+
+        original_size = len(img_bytes) / 1024
+        compressed_size = output.getbuffer().nbytes / 1024
+
+        await ctx.reply(
+            f"✅ Compressed! `{original_size:.1f}KB` → `{compressed_size:.1f}KB`",
+            file=discord.File(output, filename="compressed.jpg")
+        )
+
+    except Exception as e:
+        await ctx.send(f"Gagal compress: {e}")
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
