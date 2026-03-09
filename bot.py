@@ -1,13 +1,13 @@
 import os
 import json
 import io
-import sqlite3
 import time
 import discord
 import aiohttp
 import random
 import asyncio
 import pytz
+import libsql_experimental as libsql
 from datetime import datetime
 from discord.ext import commands
 from groq import Groq
@@ -15,113 +15,92 @@ from groq import Groq
 TOKEN = os.getenv("TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
+NEWS_KEY = os.getenv("NEWS_KEY")
+TURSO_URL = os.getenv("TURSO_URL")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN")
 
 client = Groq(api_key=GROQ_KEY)
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 START_TIME = time.time()
 
-# ===== MEMORY SYSTEM (SQLite) =====
+# ===== DATABASE (Turso) =====
 
-DB_FILE = "memory.db"
-
+def get_db():
+    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+    conn.sync()
+    return conn
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
+    conn = get_db()
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS memory (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id   TEXT NOT NULL,
             role      TEXT NOT NULL,
             content   TEXT NOT NULL
-        )
-    """)
-    c.execute("""
+        );
         CREATE TABLE IF NOT EXISTS prefixes (
             guild_id  TEXT PRIMARY KEY,
             prefix    TEXT NOT NULL DEFAULT '!'
-        )
+        );
+        CREATE TABLE IF NOT EXISTS wack_scores (
+            user_id   TEXT PRIMARY KEY,
+            username  TEXT NOT NULL,
+            best      INTEGER DEFAULT 0,
+            total     INTEGER DEFAULT 0,
+            games     INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS reminders (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     TEXT NOT NULL,
+            channel_id  TEXT NOT NULL,
+            pesan       TEXT NOT NULL,
+            waktu       REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS todos (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT NOT NULL,
+            tugas     TEXT NOT NULL,
+            selesai   INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS notes (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT NOT NULL,
+            judul     TEXT NOT NULL,
+            isi       TEXT NOT NULL
+        );
     """)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS wack_scores (
-        user_id   TEXT PRIMARY KEY,
-        username  TEXT NOT NULL,
-        best      INTEGER DEFAULT 0,
-        total     INTEGER DEFAULT 0,
-        games     INTEGER DEFAULT 0
-    )
-""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS reminders (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id     TEXT NOT NULL,
-        channel_id  TEXT NOT NULL,
-        pesan       TEXT NOT NULL,
-        waktu       REAL NOT NULL
-    )
-""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS todos (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id   TEXT NOT NULL,
-        tugas     TEXT NOT NULL,
-        selesai   INTEGER DEFAULT 0
-    )
-""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS notes (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id   TEXT NOT NULL,
-        judul     TEXT NOT NULL,
-        isi       TEXT NOT NULL
-    )
-""")
-    conn.commit()
-    conn.close()
-
-
-
-
+    conn.sync()
 
 def load_memory(user_id: str, limit: int = 15) -> list:
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Ambil N pesan terakhir, terus dibalik biar urutannya bener
-    c.execute("""
+    conn = get_db()
+    rows = conn.execute("""
         SELECT role, content FROM (
             SELECT id, role, content FROM memory
             WHERE user_id = ?
             ORDER BY id DESC
             LIMIT ?
         ) ORDER BY id ASC
-    """, (user_id, limit))
-    rows = c.fetchall()
-    conn.close()
+    """, (user_id, limit)).fetchall()
     return [{"role": r, "content": c} for r, c in rows]
 
 def save_message(user_id: str, role: str, content: str):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO memory (user_id, role, content) VALUES (?, ?, ?)",
-        (user_id, role, content)
-    )
-    # Hapus pesan lama kalau udah lebih dari 15 (biar DB ga bengkak)
-    c.execute("""
+    conn = get_db()
+    conn.execute("INSERT INTO memory (user_id, role, content) VALUES (?, ?, ?)", (user_id, role, content))
+    conn.execute("""
         DELETE FROM memory WHERE user_id = ? AND id NOT IN (
             SELECT id FROM memory WHERE user_id = ? ORDER BY id DESC LIMIT 15
         )
     """, (user_id, user_id))
-    conn.commit()
-    conn.close()
+    conn.sync()
 
 def save_wack_score(user_id: str, username: str, skor: int, total: int):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
+    conn = get_db()
+    conn.execute("""
         INSERT INTO wack_scores (user_id, username, best, total, games)
         VALUES (?, ?, ?, ?, 1)
         ON CONFLICT(user_id) DO UPDATE SET
@@ -130,70 +109,54 @@ def save_wack_score(user_id: str, username: str, skor: int, total: int):
             total = total + ?,
             games = games + 1
     """, (user_id, username, skor, skor, username, skor, skor))
-    conn.commit()
-    conn.close()
+    conn.sync()
 
 def get_leaderboard():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT username, best, total, games FROM wack_scores ORDER BY best DESC LIMIT 10")
-    rows = c.fetchall()
-    conn.close()
-    return rows
+    conn = get_db()
+    return conn.execute("SELECT username, best, total, games FROM wack_scores ORDER BY best DESC LIMIT 10").fetchall()
 
 async def cek_reminder():
     await bot.wait_until_ready()
     while not bot.is_closed():
         sekarang = time.time()
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT id, user_id, channel_id, pesan FROM reminders WHERE waktu <= ?", (sekarang,))
-        rows = c.fetchall()
+        conn = get_db()
+        rows = conn.execute("SELECT id, user_id, channel_id, pesan FROM reminders WHERE waktu <= ?", (sekarang,)).fetchall()
         for row in rows:
             id, user_id, channel_id, pesan = row
             channel = bot.get_channel(int(channel_id))
             if channel:
                 await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
-            c.execute("DELETE FROM reminders WHERE id = ?", (id,))
-        conn.commit()
-        conn.close()
+            conn.execute("DELETE FROM reminders WHERE id = ?", (id,))
+        conn.sync()
         await asyncio.sleep(1)
+
+def get_prefix(bot, message):
+    if not message.guild:
+        return "!"
+    conn = get_db()
+    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
+    return row[0] if row else "!"
+
+def set_prefix(guild_id: str, prefix: str):
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO prefixes (guild_id, prefix) VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
+    """, (guild_id, prefix, prefix))
+    conn.sync()
 
 init_db()
 afk_users = {}
 
-#save prefix
-def get_prefix(bot, message):
-    if not message.guild:
-        return "!"
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else "!"
-
-def set_prefix(guild_id: str, prefix: str):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO prefixes (guild_id, prefix) VALUES (?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
-    """, (guild_id, prefix, prefix))
-    conn.commit()
-    conn.close()
-
-
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
-# ==========================
 
+# ==========================
 
 @bot.event
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
     asyncio.ensure_future(cek_reminder())
 
-#buat ngeping(!ping)
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong 🏓")
@@ -202,23 +165,18 @@ def is_creator_question(text):
     keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
     return any(k in text for k in keywords)
 
-#buat kalo !chat ai bakal bales
 @bot.command()
 async def chat(ctx, *, message):
-
     if not GROQ_KEY:
         await ctx.send("API key Groq belum diset.")
         return
 
     user_id = str(ctx.author.id)
-
     save_message(user_id, "user", message)
     history = load_memory(user_id)
 
-    
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
-
 
     async with ctx.typing():
         try:
@@ -242,7 +200,6 @@ async def chat(ctx, *, message):
             )
 
             reply = response.choices[0].message.content or "AI gak ngasih respon 😅"
-
             save_message(user_id, "assistant", reply)
 
             if len(reply) > 2000:
@@ -254,10 +211,8 @@ async def chat(ctx, *, message):
             print("ERROR:", e)
             await ctx.send("AI error 😅")
 
-#buat khusus channel namanya "enki" auto reply
 @bot.event
 async def on_message(message):
-
     if message.author == bot.user:
         return
 
@@ -266,11 +221,12 @@ async def on_message(message):
             if user.id in afk_users:
                 await message.channel.send(f"⚠️ {user.display_name} lagi AFK: `{afk_users[user.id]}`")
 
-# cek kalo yang AFK balik
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         embed = discord.Embed(
-            description=f"Welcome back {message.author.display_name}! AFK kamu udah dihapus 👋",color=0x00ff99)
+            description=f"Welcome back {message.author.display_name}! AFK kamu udah dihapus 👋",
+            color=0x00ff99
+        )
         await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
@@ -285,8 +241,6 @@ async def on_message(message):
         return
 
     user_id = str(message.author.id)
-    nickname = message.author.display_name
-
     save_message(user_id, "user", message.content)
     history = load_memory(user_id)
 
@@ -314,19 +268,15 @@ async def on_message(message):
         )
 
         reply = response.choices[0].message.content
-
         save_message(user_id, "assistant", reply)
-
         await message.channel.send(reply)
 
     except Exception as e:
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
-#buat benerin codingan
 @bot.command()
 async def debug(ctx, *, question: str = None):
-    """Debug file Python yang di-upload sebagai attachment"""
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 🔥")
         return
@@ -337,7 +287,6 @@ async def debug(ctx, *, question: str = None):
         await ctx.send("Cuma bisa debug file `.py`")
         return
 
-    # Batasi ukuran file (max 50KB)
     if file.size > 50_000:
         await ctx.send("File terlalu besar (max 50KB)")
         return
@@ -349,7 +298,6 @@ async def debug(ctx, *, question: str = None):
         await ctx.send(f"Gagal baca file: {e}")
         return
 
-    # Kalau user nanya sesuatu spesifik, sertakan pertanyaannya
     user_prompt = f"Debug this Python code:\n\n```python\n{code}\n```"
     if question:
         user_prompt += f"\n\nFokus ke masalah ini: {question}"
@@ -365,33 +313,26 @@ async def debug(ctx, *, question: str = None):
                             "You are an expert Python debugger. "
                             "Identify bugs clearly, explain why it's a bug, "
                             "and provide the fixed code with short explanation."
-                        ) # yang bagian ini bisa di ganti, "content" 
+                        )
                     },
-                    {
-                        "role": "user",
-                        "content": user_prompt
-                    }
+                    {"role": "user", "content": user_prompt}
                 ]
             )
 
             reply = response.choices[0].message.content
-            if len(reply) > 2000:
-                reply = reply[:1990] + "..."
-            else:
-                import io
-                file_output = io.BytesIO(reply.encode("utf-8"))
-                await ctx.reply("Hasil debug terlalu panjang, nih filenya 📄",file=discord.File(file_output, filename="debug_result.txt")
-    )
 
-            await ctx.reply(reply)  # reply ke message user, bukan kirim baru
+            if len(reply) > 2000:
+                file_output = io.BytesIO(reply.encode("utf-8"))
+                await ctx.reply("Hasil debug terlalu panjang, nih filenya 📄",
+                    file=discord.File(file_output, filename="debug_result.txt"))
+            else:
+                await ctx.reply(reply)
 
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-#buat ngeroasting codingan
 @bot.command()
 async def roast(ctx):
-    """Roast code Python yang di-upload"""
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu biar gw hajar 😈")
         return
@@ -428,10 +369,7 @@ async def roast(ctx):
                             "balas pakai bahasa indonesia, ga harus sopan."
                         )
                     },
-                    {
-                        "role": "user",
-                        "content": f"Roast this code:\n\n```python\n{code}\n```"
-                    }
+                    {"role": "user", "content": f"Roast this code:\n\n```python\n{code}\n```"}
                 ]
             )
 
@@ -441,18 +379,14 @@ async def roast(ctx):
                 await ctx.reply(reply)
             else:
                 file_output = io.BytesIO(reply.encode("utf-8"))
-                await ctx.reply(
-                    "Roastannya panjang banget, nih filenya 🔥",
-                    file=discord.File(file_output, filename="roast_result.txt")
-                )
+                await ctx.reply("Roastannya panjang banget, nih filenya 🔥",
+                    file=discord.File(file_output, filename="roast_result.txt"))
 
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-#buat ngereview hasil codingan
 @bot.command()
 async def review(ctx, *, question: str = None):
-    """Review code Python yang di-upload"""
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 📎")
         return
@@ -492,10 +426,7 @@ async def review(ctx, *, question: str = None):
                             "Be constructive and specific."
                         )
                     },
-                    {
-                        "role": "user",
-                        "content": user_prompt
-                    }
+                    {"role": "user", "content": user_prompt}
                 ]
             )
 
@@ -505,34 +436,30 @@ async def review(ctx, *, question: str = None):
                 await ctx.reply(reply)
             else:
                 file_output = io.BytesIO(reply.encode("utf-8"))
-                await ctx.reply(
-                    "Hasil review terlalu panjang, nih filenya 📄",
-                    file=discord.File(file_output, filename="review_result.txt")
-                )
+                await ctx.reply("Hasil review terlalu panjang, nih filenya 📄",
+                    file=discord.File(file_output, filename="review_result.txt"))
 
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-#buat cek berapa lama bot udah on
 @bot.command()
 async def uptime(ctx):
     uptime_seconds = int(time.time() - START_TIME)
 
     days = uptime_seconds // 86400
-    hours = uptime_seconds // 3600
+    hours = (uptime_seconds % 86400) // 3600
     minutes = (uptime_seconds % 3600) // 60
     seconds = uptime_seconds % 60
-    
+
     embed = discord.Embed(
         title="⏱️ Uptime Enki",
         description=f"**{days}h {hours}j {minutes}m {seconds}d**",
-        color=0x00ff99  # warna hijau, bisa diganti
+        color=0x00ff99
     )
     embed.set_footer(text="Enki v1.0")
-    
+
     await ctx.send(embed=embed)
 
-#buat set prefix
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setprefix(ctx, prefix: str):
@@ -544,39 +471,23 @@ async def setprefix(ctx, prefix: str):
     )
     await ctx.send(embed=embed)
 
-#buat cek statistik udah pake enki berapa lama
 @bot.command()
 async def stats(ctx):
     user_id = str(ctx.author.id)
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # total pesan user
-    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ?", (user_id,))
-    total = c.fetchone()[0]
-    
-    # total pesan user ke AI (role user)
-    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'user'", (user_id,))
-    total_user = c.fetchone()[0]
-    
-    # total balasan AI
-    c.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'assistant'", (user_id,))
-    total_ai = c.fetchone()[0]
-    
-    conn.close()
-    
-    embed = discord.Embed(
-        title="📊 Stats Kamu",
-        color=0x00ff99
-    )
+    conn = get_db()
+
+    total = conn.execute("SELECT COUNT(*) FROM memory WHERE user_id = ?", (user_id,)).fetchone()[0]
+    total_user = conn.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'user'", (user_id,)).fetchone()[0]
+    total_ai = conn.execute("SELECT COUNT(*) FROM memory WHERE user_id = ? AND role = 'assistant'", (user_id,)).fetchone()[0]
+
+    embed = discord.Embed(title="📊 Stats Kamu", color=0x00ff99)
     embed.add_field(name="Total Pesan", value=f"`{total}`", inline=True)
     embed.add_field(name="Pesan Kamu", value=f"`{total_user}`", inline=True)
     embed.add_field(name="Balasan Enki", value=f"`{total_ai}`", inline=True)
     embed.set_footer(text=f"Stats untuk {ctx.author.display_name}")
-    
+
     await ctx.send(embed=embed)
 
-#untuk cek cuaca (!cuaca [kota])
 @bot.command()
 async def cuaca(ctx, *, kota: str):
     if not WEATHER_KEY:
@@ -586,8 +497,6 @@ async def cuaca(ctx, *, kota: str):
     async with aiohttp.ClientSession() as session:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id"
         async with session.get(url) as resp:
-            print(f"Status: {resp.status}")  # ← tambahin ini
-            print(f"URL: {url}")             # ← sama ini
             if resp.status != 200:
                 await ctx.send(f"Kota `{kota}` ga ketemu 😅")
                 return
@@ -600,10 +509,7 @@ async def cuaca(ctx, *, kota: str):
     kelembaban = data["main"]["humidity"]
     angin = data["wind"]["speed"]
 
-    embed = discord.Embed(
-        title=f"🌤️ Cuaca di {kota.title()}",
-        color=0x00ff99
-    )
+    embed = discord.Embed(title=f"🌤️ Cuaca di {kota.title()}", color=0x00ff99)
     embed.add_field(name="Kondisi", value=f"`{cuaca_desc}`", inline=False)
     embed.add_field(name="🌡️ Suhu", value=f"`{suhu}°C`", inline=True)
     embed.add_field(name="🔽 Min", value=f"`{suhu_min}°C`", inline=True)
@@ -613,10 +519,8 @@ async def cuaca(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
-#buat translate bahasa indo ke bahasa asing (!translate [wajib dua huruf negara yang mau, misal ja(jepang) en(inggris)] baru bahasa)
 @bot.command()
 async def translate(ctx, bahasa: str, *, teks: str):
-    """Translate teks ke bahasa lain"""
     async with aiohttp.ClientSession() as session:
         url = f"https://api.mymemory.translated.net/get?q={teks}&langpair=id|{bahasa}"
         async with session.get(url) as resp:
@@ -626,18 +530,14 @@ async def translate(ctx, bahasa: str, *, teks: str):
             data = await resp.json()
 
     hasil = data["responseData"]["translatedText"]
-    
-    embed = discord.Embed(
-        title="🌐 Translate",
-        color=0x00ff99
-    )
+
+    embed = discord.Embed(title="🌐 Translate", color=0x00ff99)
     embed.add_field(name="Teks Asli", value=f"`{teks}`", inline=False)
     embed.add_field(name="Hasil", value=f"`{hasil}`", inline=False)
     embed.set_footer(text=f"id → {bahasa}")
-    
+
     await ctx.send(embed=embed)
 
-#tanya apa apa (!ball gw ganteng ga?)
 @bot.command()
 async def ball(ctx, *, pertanyaan: str):
     jawaban = [
@@ -658,10 +558,7 @@ async def ball(ctx, *, pertanyaan: str):
 
     hasil = random.choice(jawaban)
 
-    embed = discord.Embed(
-        title="🎱 8Ball",
-        color=0x00ff99
-    )
+    embed = discord.Embed(title="🎱 8Ball", color=0x00ff99)
     embed.add_field(name="Pertanyaan", value=f"`{pertanyaan}`", inline=False)
     embed.add_field(name="Jawaban", value=hasil, inline=False)
     await ctx.send(embed=embed)
@@ -676,11 +573,8 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
-#minigame wack, (pencet emojinya)
 @bot.command()
 async def wack(ctx):
-    import asyncio
-
     skor = 0
     ronde = 0
 
@@ -737,7 +631,6 @@ async def wack(ctx):
 
     await ctx.send(embed=embed)
 
-#buat ngecek leaderboard minigame wack
 @bot.command()
 async def leaderboard(ctx):
     data = get_leaderboard()
@@ -746,10 +639,7 @@ async def leaderboard(ctx):
         await ctx.send("Belum ada yang main `!wack` 😅")
         return
 
-    embed = discord.Embed(
-        title="🏆 Leaderboard Whack-a-Mole",
-        color=0x00ff99
-    )
+    embed = discord.Embed(title="🏆 Leaderboard Whack-a-Mole", color=0x00ff99)
 
     medals = ["🥇", "🥈", "🥉"]
     for i, (username, best, total, games) in enumerate(data):
@@ -762,10 +652,8 @@ async def leaderboard(ctx):
 
     await ctx.send(embed=embed)
 
-#buat reminder (!reminder XD/J/H pesan)
 @bot.command()
 async def remind(ctx, waktu: str, *, pesan: str):
-    # parse waktu
     satuan = waktu[-1]
     try:
         angka = int(waktu[:-1])
@@ -785,14 +673,12 @@ async def remind(ctx, waktu: str, *, pesan: str):
 
     waktu_remind = time.time() + detik
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute(
+    conn = get_db()
+    conn.execute(
         "INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
         (str(ctx.author.id), str(ctx.channel.id), pesan, waktu_remind)
     )
-    conn.commit()
-    conn.close()
+    conn.sync()
 
     embed = discord.Embed(
         title="⏰ Reminder Set!",
@@ -805,25 +691,19 @@ async def remind(ctx, waktu: str, *, pesan: str):
 @bot.command()
 async def todo(ctx, aksi: str, *, tugas: str = None):
     user_id = str(ctx.author.id)
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn = get_db()
 
-    # tambah tugas
     if aksi == "add":
         if not tugas:
             await ctx.send("Tugas nya apa? `!todo add belajar python`")
             return
-        c.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, tugas))
-        conn.commit()
-        conn.close()
+        conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, tugas))
+        conn.sync()
         embed = discord.Embed(description=f"✅ Ditambahin: **{tugas}**", color=0x00ff99)
         await ctx.send(embed=embed)
 
-    # lihat semua tugas
     elif aksi == "list":
-        c.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,))
-        rows = c.fetchall()
-        conn.close()
+        rows = conn.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,)).fetchall()
         if not rows:
             await ctx.send("Todo list kamu kosong 😴")
             return
@@ -833,25 +713,21 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             embed.add_field(name=f"{status} #{id}", value=tugas, inline=False)
         await ctx.send(embed=embed)
 
-    # tandai selesai
     elif aksi == "done":
         if not tugas:
             await ctx.send("Masukkin ID tugasnya! `!todo done 1`")
             return
-        c.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (tugas, user_id))
-        conn.commit()
-        conn.close()
+        conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (tugas, user_id))
+        conn.sync()
         embed = discord.Embed(description=f"✅ Tugas #{tugas} selesai!", color=0x00ff99)
         await ctx.send(embed=embed)
 
-    # hapus tugas
     elif aksi == "delete":
         if not tugas:
             await ctx.send("Masukkin ID tugasnya! `!todo delete 1`")
             return
-        c.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (tugas, user_id))
-        conn.commit()
-        conn.close()
+        conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (tugas, user_id))
+        conn.sync()
         embed = discord.Embed(description=f"🗑️ Tugas #{tugas} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -861,10 +737,8 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
 @bot.command()
 async def note(ctx, aksi: str, *, konten: str = None):
     user_id = str(ctx.author.id)
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn = get_db()
 
-    # tambah catatan
     if aksi == "add":
         if not konten:
             await ctx.send("Format: `!note add judul | isi catatan`")
@@ -873,17 +747,13 @@ async def note(ctx, aksi: str, *, konten: str = None):
             await ctx.send("Pisahin judul dan isi pake `|` ya! `!note add judul | isi catatan`")
             return
         judul, isi = konten.split("|", 1)
-        c.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)", (user_id, judul.strip(), isi.strip()))
-        conn.commit()
-        conn.close()
+        conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)", (user_id, judul.strip(), isi.strip()))
+        conn.sync()
         embed = discord.Embed(description=f"📝 Catatan **{judul.strip()}** disimpan!", color=0x00ff99)
         await ctx.send(embed=embed)
 
-    # lihat semua catatan
     elif aksi == "list":
-        c.execute("SELECT id, judul FROM notes WHERE user_id = ?", (user_id,))
-        rows = c.fetchall()
-        conn.close()
+        rows = conn.execute("SELECT id, judul FROM notes WHERE user_id = ?", (user_id,)).fetchall()
         if not rows:
             await ctx.send("Belum ada catatan 😴")
             return
@@ -892,14 +762,11 @@ async def note(ctx, aksi: str, *, konten: str = None):
             embed.add_field(name=f"#{id}", value=judul, inline=False)
         await ctx.send(embed=embed)
 
-    # lihat isi catatan
     elif aksi == "get":
         if not konten:
             await ctx.send("Masukkin ID catatan! `!note get 1`")
             return
-        c.execute("SELECT judul, isi FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
-        row = c.fetchone()
-        conn.close()
+        row = conn.execute("SELECT judul, isi FROM notes WHERE id = ? AND user_id = ?", (konten, user_id)).fetchone()
         if not row:
             await ctx.send("Catatan ga ketemu 😅")
             return
@@ -907,19 +774,141 @@ async def note(ctx, aksi: str, *, konten: str = None):
         embed = discord.Embed(title=f"📝 {judul}", description=isi, color=0x00ff99)
         await ctx.send(embed=embed)
 
-    # hapus catatan
     elif aksi == "delete":
         if not konten:
             await ctx.send("Masukkin ID catatan! `!note delete 1`")
             return
-        c.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
-        conn.commit()
-        conn.close()
+        conn.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
+        conn.sync()
         embed = discord.Embed(description=f"🗑️ Catatan #{konten} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `get`, `delete`")
+
+@bot.command()
+async def serverinfo(ctx):
+    guild = ctx.guild
+
+    embed = discord.Embed(title=f"📊 Info Server {guild.name}", color=0x00ff99)
+    embed.add_field(name="👑 Owner ID", value=f"`{guild.owner_id}`", inline=True)
+    embed.add_field(name="👥 Member", value=f"`{guild.member_count}`", inline=True)
+    embed.add_field(name="📅 Dibuat", value=guild.created_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="💬 Channel", value=f"`{len(guild.channels)}`", inline=True)
+    embed.add_field(name="🎭 Roles", value=f"`{len(guild.roles)}`", inline=True)
+    embed.add_field(name="😀 Emoji", value=f"`{len(guild.emojis)}`", inline=True)
+
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def userinfo(ctx, member: discord.Member = None):
+    member = member or ctx.author
+
+    embed = discord.Embed(title=f"👤 Info User {member.display_name}", color=0x00ff99)
+    embed.add_field(name="🏷️ Username", value=f"`{member.name}`", inline=True)
+    embed.add_field(name="🆔 ID", value=f"`{member.id}`", inline=True)
+    embed.add_field(name="📅 Akun Dibuat", value=member.created_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="📥 Join Server", value=member.joined_at.strftime("%d %B %Y"), inline=True)
+    embed.add_field(name="🎭 Roles", value=", ".join([r.name for r in member.roles[1:]]) or "Tidak ada", inline=False)
+
+    if member.avatar:
+        embed.set_thumbnail(url=member.avatar.url)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def forecast(ctx, *, kota: str):
+    if not WEATHER_KEY:
+        await ctx.send("API key cuaca belum diset.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        url = f"http://api.openweathermap.org/data/2.5/forecast?q={kota}&appid={WEATHER_KEY}&units=metric&lang=id&cnt=24"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send(f"Kota `{kota}` ga ketemu 😅")
+                return
+            data = await resp.json()
+
+    embed = discord.Embed(title=f"🌤️ Forecast {kota.title()} - 4 Hari", color=0x00ff99)
+
+    hari = {}
+    for item in data["list"]:
+        tanggal = item["dt_txt"].split(" ")[0]
+        if tanggal not in hari:
+            hari[tanggal] = {
+                "desc": item["weather"][0]["description"],
+                "suhu_min": item["main"]["temp_min"],
+                "suhu_max": item["main"]["temp_max"],
+            }
+        else:
+            hari[tanggal]["suhu_min"] = min(hari[tanggal]["suhu_min"], item["main"]["temp_min"])
+            hari[tanggal]["suhu_max"] = max(hari[tanggal]["suhu_max"], item["main"]["temp_max"])
+
+    for i, (tanggal, info) in enumerate(list(hari.items())[:4]):
+        embed.add_field(
+            name=f"📅 {tanggal}",
+            value=f"`{info['desc']}`\n🌡️ {info['suhu_min']:.1f}°C - {info['suhu_max']:.1f}°C",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def calc(ctx, *, ekspresi: str):
+    try:
+        allowed = set("0123456789+-*/(). ")
+        if not all(c in allowed for c in ekspresi):
+            await ctx.send("❌ Cuma boleh angka dan operator `+ - * / ( )`")
+            return
+
+        hasil = eval(ekspresi)
+
+        embed = discord.Embed(title="🧮 Kalkulator", color=0x00ff99)
+        embed.add_field(name="Input", value=f"`{ekspresi}`", inline=False)
+        embed.add_field(name="Hasil", value=f"`{hasil}`", inline=False)
+        await ctx.send(embed=embed)
+
+    except ZeroDivisionError:
+        await ctx.send("❌ Ga bisa bagi sama nol 😅")
+    except:
+        await ctx.send("❌ Ekspresi ga valid!")
+
+@bot.command()
+async def news(ctx, *, topik: str = "indonesia"):
+    if not NEWS_KEY:
+        await ctx.send("API key news belum diset.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        url = f"https://newsapi.org/v2/everything?q={topik}&language=id&sortBy=publishedAt&pageSize=5&apiKey={NEWS_KEY}"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                await ctx.send("Gagal ngambil berita 😅")
+                return
+            data = await resp.json()
+
+    articles = data.get("articles", [])
+    if not articles:
+        await ctx.send(f"Ga ada berita tentang `{topik}` 😅")
+        return
+
+    embed = discord.Embed(title=f"📰 Berita Terkini: {topik.title()}", color=0x00ff99)
+
+    for article in articles[:5]:
+        judul = article["title"]
+        sumber = article["source"]["name"]
+        url_berita = article["url"]
+        embed.add_field(
+            name=f"📌 {sumber}",
+            value=f"[{judul}]({url_berita})",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
