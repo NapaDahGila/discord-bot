@@ -1024,6 +1024,41 @@ async def compress(ctx, quality: int = 60):
     except Exception as e:
         await ctx.send(f"Gagal compress: {e}")
 
+bot.remove_command("help")
+
+@bot.command()
+async def help(ctx, *, command: str = None):
+    
+    if command:
+        cmd = bot.get_command(command)
+        if not cmd:
+            await ctx.send(f"Command `{command}` ga ketemu 😅")
+            return
+        embed = discord.Embed(
+            title=f"📖 !{cmd.name}",
+            color=0x00ff99
+        )
+        embed.add_field(name="Cara pake", value=f"`{cmd.usage or 'Lihat deskripsi'}`", inline=False)
+        embed.add_field(name="Deskripsi", value=cmd.help or "Ga ada deskripsi", inline=False)
+        await ctx.send(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="📚 Enki Help",
+        description="Ketik `!help <command>` buat detail tiap command",
+        color=0x00ff99
+    )
+
+    embed.add_field(name="🤖 AI", value="`chat` `debug` `review` `roast`", inline=False)
+    embed.add_field(name="🌤️ Info", value="`cuaca` `forecast` `news` `translate`", inline=False)
+    embed.add_field(name="📋 Personal", value="`remind` `todo` `note` `afk`", inline=False)
+    embed.add_field(name="🖼️ Foto", value="`convert` `resize` `compress`", inline=False)
+    embed.add_field(name="🎮 Game", value="`wack` `leaderboard` `ball`", inline=False)
+    embed.add_field(name="📊 Server", value="`serverinfo` `userinfo` `stats` `setprefix` `uptime` `ping` `calc`", inline=False)
+
+    embed.set_footer(text="Enki v1.0 | dibuat sama Ren Lumireign")
+    await ctx.send(embed=embed)
+
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
 else:
