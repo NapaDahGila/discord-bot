@@ -255,6 +255,7 @@ async def on_message(message):
         return
 
     if is_wake_call(text):
+        print(f"DEBUG wake call detected: {text}")
         active_channels[message.channel.id] = message.author.id
         await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
         return
