@@ -820,7 +820,7 @@ async def userinfo(ctx, member: discord.Member = None):
 
     await ctx.send(embed=embed)
 
-@bot.command(help="buat ngeliat cuaca 4 hari kedepan", usage="!forecast <kota>)
+@bot.command(help="buat ngeliat cuaca 4 hari kedepan", usage="!forecast <kota>")
 async def forecast(ctx, *, kota: str):
     if not WEATHER_KEY:
         await ctx.send("API key cuaca belum diset.")
