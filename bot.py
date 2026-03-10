@@ -146,6 +146,11 @@ def set_prefix(guild_id: str, prefix: str):
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
     conn.sync()
+    print(f"DEBUG set_prefix guild {guild_id} → {prefix}")  # ← tambahin ini
+    
+    # verify tersimpan
+    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
+    print(f"DEBUG verify: {row}")  # ← sama ini
 
 init_db()
 afk_users = {}
