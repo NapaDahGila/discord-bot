@@ -159,9 +159,14 @@ def set_prefix(guild_id: str, prefix: str):
 
 init_db()
 afk_users = {}
+active_channels = {}
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
+
+def is_wake_call(text):
+    keywords = ["wake up enki", "enki bangun", "hey enki", "hei enki"]
+    return any(k in text for k in keywords)
 # ==========================
 
 @bot.event
@@ -249,7 +254,18 @@ async def on_message(message):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
         return
 
-    if message.channel.name != "enki":
+    if is_wake_call(text):
+        active_channels[message.channel.id] = message.author.id
+        await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
+        return
+    
+    if "stop enki" in text or "enki stop" in text:
+        if message.channel.id in active_channels:
+            del active_channels[message.channel.id]
+            await message.channel.send("Oke gw diam dulu 👋")
+        return
+
+    if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
     user_id = str(message.author.id)
