@@ -134,10 +134,15 @@ async def cek_reminder():
 def get_prefix(bot, message):
     if not message.guild:
         return "!"
-    conn = get_db()
-    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
-    print(f"DEBUG prefix untuk guild {message.guild.id}: {row}")  # ← tambahin ini
-    return row[0] if row else "!"
+    try:
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
+        print(f"DEBUG prefix untuk guild {message.guild.id}: {row}")
+        return row[0] if row else "!"
+    except Exception as e:
+        print(f"ERROR get_prefix: {e}")
+        return "!"
 
 def set_prefix(guild_id: str, prefix: str):
     conn = get_db()
