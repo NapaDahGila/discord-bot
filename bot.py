@@ -136,6 +136,7 @@ def get_prefix(bot, message):
         return "!"
     conn = get_db()
     row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
+    print(f"DEBUG prefix untuk guild {message.guild.id}: {row}")  # ← tambahin ini
     return row[0] if row else "!"
 
 def set_prefix(guild_id: str, prefix: str):
