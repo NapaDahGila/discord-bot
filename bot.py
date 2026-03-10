@@ -276,7 +276,7 @@ async def on_message(message):
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
-@bot.command()
+@bot.command(help="buat bantu benerin kode lu", usage="upload kode lu terus !debug")
 async def debug(ctx, *, question: str = None):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 🔥")
@@ -332,7 +332,7 @@ async def debug(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat roasting kode lu", usage="upload kode lu, terus !roast")
 async def roast(ctx):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu biar gw hajar 😈")
@@ -386,7 +386,7 @@ async def roast(ctx):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat review kode lu", usage="upload file terus !review")
 async def review(ctx, *, question: str = None):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 📎")
@@ -443,7 +443,7 @@ async def review(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat nunjukin berapa lama enki nyala", usage="!uptime")
 async def uptime(ctx):
     uptime_seconds = int(time.time() - START_TIME)
 
@@ -461,7 +461,7 @@ async def uptime(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="untuk set prefix", usage="!setprefix <bebas>")
 @commands.has_permissions(administrator=True)
 async def setprefix(ctx, prefix: str):
     set_prefix(str(ctx.guild.id), prefix)
@@ -472,7 +472,7 @@ async def setprefix(ctx, prefix: str):
     )
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin berapa lama lu pakai bot", usage="!stats / !stats <username>")
 async def stats(ctx):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -539,7 +539,7 @@ async def translate(ctx, bahasa: str, *, teks: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat seru seruan", usage="!ball <pertanyaan>")
 async def ball(ctx, *, pertanyaan: str):
     jawaban = [
         "Iya, pasti! 🎱",
@@ -564,7 +564,7 @@ async def ball(ctx, *, pertanyaan: str):
     embed.add_field(name="Jawaban", value=hasil, inline=False)
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin kalo lu afk", usage="!afk <alasan>")
 async def afk(ctx, *, alasan: str = "AFK"):
     afk_users[ctx.author.id] = alasan
     embed = discord.Embed(
@@ -574,7 +574,7 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="minigame wack", usage="/wack [note: pencet emoji sesuai tikus berada]")
 async def wack(ctx):
     skor = 0
     ronde = 0
@@ -632,7 +632,7 @@ async def wack(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin leaderboard minigame wack", usage="!leaderboard")
 async def leaderboard(ctx):
     data = get_leaderboard()
 
@@ -787,7 +787,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `get`, `delete`")
 
-@bot.command()
+@bot.command(help="buat nunjukin informasi server", usage="!serverinfo")
 async def serverinfo(ctx):
     guild = ctx.guild
 
@@ -804,7 +804,7 @@ async def serverinfo(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin informasi user", usage="!userinfo")
 async def userinfo(ctx, member: discord.Member = None):
     member = member or ctx.author
 
@@ -820,7 +820,7 @@ async def userinfo(ctx, member: discord.Member = None):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat ngeliat cuaca 4 hari kedepan", usage="!forecast <kota>)
 async def forecast(ctx, *, kota: str):
     if not WEATHER_KEY:
         await ctx.send("API key cuaca belum diset.")
@@ -858,7 +858,7 @@ async def forecast(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat kalkulator", usage="!calc 32*12")
 async def calc(ctx, *, ekspresi: str):
     try:
         allowed = set("0123456789+-*/(). ")
@@ -878,7 +878,7 @@ async def calc(ctx, *, ekspresi: str):
     except:
         await ctx.send("❌ Ekspresi ga valid!")
 
-@bot.command()
+@bot.command(help="buat ngecek berita terbaru", usage="!news")
 async def news(ctx, *, topik: str = "indonesia"):
     if not NEWS_KEY:
         await ctx.send("API key news belum diset.")
@@ -911,7 +911,7 @@ async def news(ctx, *, topik: str = "indonesia"):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat ngubah jenis foto,contoh jpg->png", usage="upload foto !convert jpg png")
 async def convert(ctx, format: str):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -947,7 +947,7 @@ async def convert(ctx, format: str):
         await ctx.send(f"Gagal convert: {e}")
 
 
-@bot.command()
+@bot.command(help="buat resize pixel foto", usage="upload foto terus !resize")
 async def resize(ctx, width: int, height: int = None):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -990,7 +990,7 @@ async def resize(ctx, width: int, height: int = None):
         await ctx.send(f"Gagal resize: {e}")
 
 
-@bot.command()
+@bot.command(help="buat ngecompress foto", usage="upload foto dulu, terus !compress")
 async def compress(ctx, quality: int = 60):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
