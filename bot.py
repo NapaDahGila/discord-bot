@@ -31,9 +31,18 @@ START_TIME = time.time()
 # ===== DATABASE (Turso) =====
 
 def get_db():
-    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-    conn.sync()
-    return conn
+    try:
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        return conn
+    except Exception as e:
+        print(f"DB error, retry: {e}")
+        import os
+        if os.path.exists("memory.db"):
+            os.remove("memory.db")
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        return conn
 
 def init_db():
     conn = get_db()
@@ -134,9 +143,20 @@ async def cek_reminder():
 def get_prefix(bot, message):
     if not message.guild:
         return "!"
-    conn = get_db()
-    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
-    return row[0] if row else "!"
+    guild_id = str(message.guild.id)
+
+    if guild_id in prefix_cache:
+        return prefix_cache[guild_id]
+
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
+        prefix = row[0] if row else "!"
+        prefix_cache[guild_id] = prefix
+        return prefix
+    except Exception as e:
+        print(f"ERROR get_prefix: {e}")
+        return "!"
 
 def set_prefix(guild_id: str, prefix: str):
     conn = get_db()
@@ -145,12 +165,24 @@ def set_prefix(guild_id: str, prefix: str):
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
     conn.sync()
+    prefix_cache[guild_id] = prefix
+    print(f"DEBUG set_prefix guild {guild_id} → {prefix}")  # ← tambahin ini
+    
+    # verify tersimpan
+    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
+    print(f"DEBUG verify: {row}")  # ← sama ini
 
 init_db()
 afk_users = {}
+active_channels = {}
+prefix_cache = {}
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
+
+def is_wake_call(text):
+    keywords = ["wake up enki", "enki bangun", "hey enki", "hei enki"]
+    return any(k in text for k in keywords)
 # ==========================
 
 @bot.event
@@ -166,7 +198,7 @@ def is_creator_question(text):
     keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
     return any(k in text for k in keywords)
 
-@bot.command()
+@bot.command(help="Chat sama Enki AI", usage="!chat <pesan>")
 async def chat(ctx, *, message):
     if not GROQ_KEY:
         await ctx.send("API key Groq belum diset.")
@@ -238,7 +270,18 @@ async def on_message(message):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
         return
 
-    if message.channel.name != "enki":
+    if is_wake_call(text):
+        active_channels[message.channel.id] = message.author.id
+        await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
+        return
+    
+    if "stop enki" in text or "enki stop" in text:
+        if message.channel.id in active_channels:
+            del active_channels[message.channel.id]
+            await message.channel.send("Oke gw diam dulu 👋")
+        return
+
+    if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
     user_id = str(message.author.id)
@@ -276,7 +319,7 @@ async def on_message(message):
         print("ERROR:", e)
         await message.channel.send("AI error 😅")
 
-@bot.command()
+@bot.command(help="buat bantu benerin kode lu", usage="upload kode lu terus !debug")
 async def debug(ctx, *, question: str = None):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 🔥")
@@ -332,7 +375,7 @@ async def debug(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat roasting kode lu", usage="upload kode lu, terus !roast")
 async def roast(ctx):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu biar gw hajar 😈")
@@ -386,7 +429,7 @@ async def roast(ctx):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat review kode lu", usage="upload file terus !review")
 async def review(ctx, *, question: str = None):
     if not ctx.message.attachments:
         await ctx.send("Upload file Python dulu 📎")
@@ -443,7 +486,7 @@ async def review(ctx, *, question: str = None):
         except Exception as e:
             await ctx.reply(f"AI error: {e}")
 
-@bot.command()
+@bot.command(help="buat nunjukin berapa lama enki nyala", usage="!uptime")
 async def uptime(ctx):
     uptime_seconds = int(time.time() - START_TIME)
 
@@ -461,7 +504,7 @@ async def uptime(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="untuk set prefix", usage="!setprefix <bebas>")
 @commands.has_permissions(administrator=True)
 async def setprefix(ctx, prefix: str):
     set_prefix(str(ctx.guild.id), prefix)
@@ -472,7 +515,7 @@ async def setprefix(ctx, prefix: str):
     )
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin berapa lama lu pakai bot", usage="!stats / !stats <username>")
 async def stats(ctx):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -489,7 +532,7 @@ async def stats(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Cek cuaca kota tertentu", usage="!cuaca <kota>")
 async def cuaca(ctx, *, kota: str):
     if not WEATHER_KEY:
         await ctx.send("API key cuaca belum diset.")
@@ -520,7 +563,7 @@ async def cuaca(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Translate teks ke bahasa lain", usage="!translate <kode_bahasa> <teks>")
 async def translate(ctx, bahasa: str, *, teks: str):
     async with aiohttp.ClientSession() as session:
         url = f"https://api.mymemory.translated.net/get?q={teks}&langpair=id|{bahasa}"
@@ -539,7 +582,7 @@ async def translate(ctx, bahasa: str, *, teks: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat seru seruan", usage="!ball <pertanyaan>")
 async def ball(ctx, *, pertanyaan: str):
     jawaban = [
         "Iya, pasti! 🎱",
@@ -564,7 +607,7 @@ async def ball(ctx, *, pertanyaan: str):
     embed.add_field(name="Jawaban", value=hasil, inline=False)
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin kalo lu afk", usage="!afk <alasan>")
 async def afk(ctx, *, alasan: str = "AFK"):
     afk_users[ctx.author.id] = alasan
     embed = discord.Embed(
@@ -574,7 +617,7 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="minigame wack", usage="/wack [note: pencet emoji sesuai tikus berada]")
 async def wack(ctx):
     skor = 0
     ronde = 0
@@ -632,7 +675,7 @@ async def wack(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin leaderboard minigame wack", usage="!leaderboard")
 async def leaderboard(ctx):
     data = get_leaderboard()
 
@@ -653,7 +696,7 @@ async def leaderboard(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Set reminder", usage="!remind <waktu> <pesan> | contoh: !remind 10m makan")
 async def remind(ctx, waktu: str, *, pesan: str):
     satuan = waktu[-1]
     try:
@@ -689,7 +732,7 @@ async def remind(ctx, waktu: str, *, pesan: str):
     embed.set_footer(text=f"dalam {waktu}")
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="Todo list — add/list/done/delete", usage="!todo <add/list/done/delete> <tugas>")
 async def todo(ctx, aksi: str, *, tugas: str = None):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -735,7 +778,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `done`, `delete`")
 
-@bot.command()
+@bot.command(help="Simpan catatan — add/list/get/delete", usage="!note <add/list/get/delete> <judul | isi>")
 async def note(ctx, aksi: str, *, konten: str = None):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -787,7 +830,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
     else:
         await ctx.send("Aksi ga valid! Gunain: `add`, `list`, `get`, `delete`")
 
-@bot.command()
+@bot.command(help="buat nunjukin informasi server", usage="!serverinfo")
 async def serverinfo(ctx):
     guild = ctx.guild
 
@@ -804,7 +847,7 @@ async def serverinfo(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat nunjukin informasi user", usage="!userinfo")
 async def userinfo(ctx, member: discord.Member = None):
     member = member or ctx.author
 
@@ -820,7 +863,7 @@ async def userinfo(ctx, member: discord.Member = None):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat ngeliat cuaca 4 hari kedepan", usage="!forecast <kota>")
 async def forecast(ctx, *, kota: str):
     if not WEATHER_KEY:
         await ctx.send("API key cuaca belum diset.")
@@ -858,7 +901,7 @@ async def forecast(ctx, *, kota: str):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat kalkulator", usage="!calc 32*12")
 async def calc(ctx, *, ekspresi: str):
     try:
         allowed = set("0123456789+-*/(). ")
@@ -878,7 +921,7 @@ async def calc(ctx, *, ekspresi: str):
     except:
         await ctx.send("❌ Ekspresi ga valid!")
 
-@bot.command()
+@bot.command(help="buat ngecek berita terbaru", usage="!news")
 async def news(ctx, *, topik: str = "indonesia"):
     if not NEWS_KEY:
         await ctx.send("API key news belum diset.")
@@ -911,7 +954,7 @@ async def news(ctx, *, topik: str = "indonesia"):
 
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(help="buat ngubah jenis foto,contoh jpg->png", usage="upload foto !convert jpg png")
 async def convert(ctx, format: str):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -947,7 +990,7 @@ async def convert(ctx, format: str):
         await ctx.send(f"Gagal convert: {e}")
 
 
-@bot.command()
+@bot.command(help="buat resize pixel foto", usage="upload foto terus !resize")
 async def resize(ctx, width: int, height: int = None):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -990,7 +1033,7 @@ async def resize(ctx, width: int, height: int = None):
         await ctx.send(f"Gagal resize: {e}")
 
 
-@bot.command()
+@bot.command(help="buat ngecompress foto", usage="upload foto dulu, terus !compress")
 async def compress(ctx, quality: int = 60):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -1023,6 +1066,41 @@ async def compress(ctx, quality: int = 60):
 
     except Exception as e:
         await ctx.send(f"Gagal compress: {e}")
+
+bot.remove_command("help")
+
+@bot.command()
+async def help(ctx, *, command: str = None):
+    
+    if command:
+        cmd = bot.get_command(command)
+        if not cmd:
+            await ctx.send(f"Command `{command}` ga ketemu 😅")
+            return
+        embed = discord.Embed(
+            title=f"📖 !{cmd.name}",
+            color=0x00ff99
+        )
+        embed.add_field(name="Cara pake", value=f"`{cmd.usage or 'Lihat deskripsi'}`", inline=False)
+        embed.add_field(name="Deskripsi", value=cmd.help or "Ga ada deskripsi", inline=False)
+        await ctx.send(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="📚 Enki Help",
+        description="Ketik `!help <command>` buat detail tiap command",
+        color=0x00ff99
+    )
+
+    embed.add_field(name="🤖 AI", value="`chat` `debug` `review` `roast`", inline=False)
+    embed.add_field(name="🌤️ Info", value="`cuaca` `forecast` `news` `translate`", inline=False)
+    embed.add_field(name="📋 Personal", value="`remind` `todo` `note` `afk`", inline=False)
+    embed.add_field(name="🖼️ Foto", value="`convert` `resize` `compress`", inline=False)
+    embed.add_field(name="🎮 Game", value="`wack` `leaderboard` `ball`", inline=False)
+    embed.add_field(name="📊 Server", value="`serverinfo` `userinfo` `stats` `setprefix` `uptime` `ping` `calc`", inline=False)
+
+    embed.set_footer(text="Enki v1.0 | dibuat sama Ren Lumireign")
+    await ctx.send(embed=embed)
 
 if not TOKEN:
     print("ERROR: TOKEN tidak ditemukan!")
