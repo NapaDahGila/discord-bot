@@ -31,9 +31,18 @@ START_TIME = time.time()
 # ===== DATABASE (Turso) =====
 
 def get_db():
-    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-    conn.sync()
-    return conn
+    try:
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        return conn
+    except Exception as e:
+        print(f"DB error, retry: {e}")
+        import os
+        if os.path.exists("memory.db"):
+            os.remove("memory.db")
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        return conn
 
 def init_db():
     conn = get_db()
@@ -134,12 +143,17 @@ async def cek_reminder():
 def get_prefix(bot, message):
     if not message.guild:
         return "!"
+    guild_id = str(message.guild.id)
+
+    if guild_id in prefix_cache:
+        return prefix_cache[guild_id]
+
     try:
-        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        conn.sync()
-        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
-        print(f"DEBUG prefix untuk guild {message.guild.id}: {row}")
-        return row[0] if row else "!"
+        conn = get_db()
+        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
+        prefix = row[0] if row else "!"
+        prefix_cache[guild_id] = prefix
+        return prefix
     except Exception as e:
         print(f"ERROR get_prefix: {e}")
         return "!"
@@ -151,6 +165,7 @@ def set_prefix(guild_id: str, prefix: str):
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
     conn.sync()
+    prefix_cache[guild_id] = prefix
     print(f"DEBUG set_prefix guild {guild_id} → {prefix}")  # ← tambahin ini
     
     # verify tersimpan
@@ -160,6 +175,7 @@ def set_prefix(guild_id: str, prefix: str):
 init_db()
 afk_users = {}
 active_channels = {}
+prefix_cache = {}
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
@@ -255,7 +271,6 @@ async def on_message(message):
         return
 
     if is_wake_call(text):
-        print(f"DEBUG wake call detected: {text}")
         active_channels[message.channel.id] = message.author.id
         await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
         return
