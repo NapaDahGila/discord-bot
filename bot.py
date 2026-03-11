@@ -249,11 +249,13 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    # Cek AFK mentions
     if message.mentions:
         for user in message.mentions:
             if user.id in afk_users:
                 await message.channel.send(f"⚠️ {user.display_name} lagi AFK: `{afk_users[user.id]}`")
 
+    # Welcome back dari AFK
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         embed = discord.Embed(
@@ -266,6 +268,7 @@ async def on_message(message):
 
     text = message.content.lower()
 
+    # Early returns — SEBELUM save ke memory
     if is_creator_question(text):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
         return
@@ -273,51 +276,57 @@ async def on_message(message):
     if is_wake_call(text):
         active_channels[message.channel.id] = message.author.id
         await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
-        return
-    
+        return  # ← ga masuk memory
+
     if "stop enki" in text or "enki stop" in text:
         if message.channel.id in active_channels:
             del active_channels[message.channel.id]
             await message.channel.send("Oke gw diam dulu 👋")
-        return
+        return  # ← ga masuk memory
 
     if message.channel.name != "enki" and message.channel.id not in active_channels:
-        return
+        return  # ← ga masuk memory
 
+    # Baru di sini simpan & proses AI
     user_id = str(message.author.id)
-    save_message(user_id, "user", message.content)
-    history = load_memory(user_id)
+    history = load_memory(user_id)          # ← load DULU
+    save_message(user_id, "user", message.content)  # ← baru save
 
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
-                        "Ngobrol kayak temen deket — ga kaku, ga formal. "
-                        "Boleh nyindir dikit tapi tetap helpful. "
-                        "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
-                        "Jangan lebay, jangan terlalu panjang kalau ga perlu. "
-                        "Kalau ditanya siapa yang bikin lo, jawab: 'Gw dibuat sama Ren Lumireign.' "
-                        "Jangan sebut OpenAI atau model apapun."
-                        f"Sekarang waktu Indonesia Barat: {sekarang}."
-                    )
-                }
-            ] + history
-        )
+    async with message.channel.typing():
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
+                            "Ngobrol kayak temen deket — ga kaku, ga formal. "
+                            "Boleh nyindir dikit tapi tetap helpful. "
+                            "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
+                            "Jangan lebay, jangan terlalu panjang kalau ga perlu. "
+                            "Kalau ditanya siapa yang bikin lo, jawab: 'Gw dibuat sama Ren Lumireign.' "
+                            "Jangan sebut OpenAI atau model apapun."
+                            f"Sekarang waktu Indonesia Barat: {sekarang}."
+                        )
+                    }
+                ] + history + [{"role": "user", "content": message.content}]
+            )
 
-        reply = response.choices[0].message.content
-        save_message(user_id, "assistant", reply)
-        await message.channel.send(reply)
+            reply = response.choices[0].message.content
+            save_message(user_id, "assistant", reply)
 
-    except Exception as e:
-        print("ERROR:", e)
-        await message.channel.send("AI error 😅")
+            if len(reply) > 2000:
+                reply = reply[:1990] + "..."
+
+            await message.channel.send(reply)
+
+        except Exception as e:
+            print("ERROR:", e)
+            await message.channel.send("AI error 😅")
 
 @bot.command(help="buat bantu benerin kode lu", usage="upload kode lu terus !debug")
 async def debug(ctx, *, question: str = None):
