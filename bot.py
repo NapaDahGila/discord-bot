@@ -194,29 +194,55 @@ async def process_intent(message, reply_text, user_id):
         reply = data.get("reply", "")
         value = data.get("data", "")
 
+        print(f"[INTENT] intent={intent} data={repr(value)}")
+
         if intent == "todo_add":
-            conn = get_db()
-            conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, value))
-            conn.sync()
+            try:
+                conn = get_db()
+                conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, value))
+                conn.sync()
+                print(f"[INTENT] todo_add OK: {value}")
+            except Exception as db_err:
+                print(f"[INTENT] todo_add ERROR: {db_err}")
+                reply = "Gagal simpan todo 😅"
+
         elif intent == "todo_list":
-            conn = get_db()
-            rows = conn.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,)).fetchall()
-            if rows:
-                items = "\n".join([("✅" if s else "⬜") + f" #{i} {t}" for i, t, s in rows])
-                reply = "📋 Todo list kamu:\n" + items
-            else:
-                reply = "Todo list kamu kosong 😴"
+            try:
+                conn = get_db()
+                rows = conn.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,)).fetchall()
+                print(f"[INTENT] todo_list rows={rows}")
+                if rows:
+                    items = "\n".join([("✅" if s else "⬜") + f" #{i} {t}" for i, t, s in rows])
+                    reply = "📋 Todo list kamu:\n" + items
+                else:
+                    reply = "Todo list kamu kosong 😴"
+            except Exception as db_err:
+                print(f"[INTENT] todo_list ERROR: {db_err}")
+                reply = "Gagal baca todo 😅"
+
         elif intent == "todo_done":
-            conn = get_db()
-            conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (value, user_id))
-            conn.sync()
+            try:
+                conn = get_db()
+                conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (value, user_id))
+                conn.sync()
+                print(f"[INTENT] todo_done OK: id={value}")
+            except Exception as db_err:
+                print(f"[INTENT] todo_done ERROR: {db_err}")
+                reply = "Gagal update todo 😅"
+
         elif intent == "note_add":
             parts = value.split("|", 1)
             if len(parts) == 2:
-                conn = get_db()
-                conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
-                    (user_id, parts[0].strip(), parts[1].strip()))
-                conn.sync()
+                try:
+                    conn = get_db()
+                    conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
+                        (user_id, parts[0].strip(), parts[1].strip()))
+                    conn.sync()
+                    print(f"[INTENT] note_add OK")
+                except Exception as db_err:
+                    print(f"[INTENT] note_add ERROR: {db_err}")
+                    reply = "Gagal simpan catatan 😅"
+
         elif intent == "remind_add":
             parts = value.split("|", 1)
             if len(parts) == 2:
@@ -227,13 +253,17 @@ async def process_intent(message, reply_text, user_id):
                     detik = angka * (1 if satuan=="s" else 60 if satuan=="m" else 3600)
                     conn = get_db()
                     conn.execute("INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
-                        (user_id, str(message.channel.id), pesan, __import__("time").time() + detik))
+                        (user_id, str(message.channel.id), pesan, time.time() + detik))
                     conn.sync()
-                except Exception:
-                    pass
+                    print(f"[INTENT] remind_add OK: {waktu_str} - {pesan}")
+                except Exception as db_err:
+                    print(f"[INTENT] remind_add ERROR: {db_err}")
+                    reply = "Gagal set reminder 😅"
+
         if reply:
             await message.channel.send(reply)
-    except Exception:
+    except Exception as e:
+        print(f"[INTENT] OUTER ERROR: {e} | raw: {repr(reply_text[:100])}")
         await message.channel.send(reply_text)
 # ==========================
 
