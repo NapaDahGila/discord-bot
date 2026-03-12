@@ -31,9 +31,11 @@ START_TIME = time.time()
 # ===== DATABASE (Turso) =====
 
 def get_db():
-    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-    conn.sync()
-    return conn
+    global _db_conn
+    if _db_conn is None:
+        _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        _db_conn.sync()
+    return _db_conn
 
 def init_db():
     conn = get_db()
