@@ -30,6 +30,8 @@ START_TIME = time.time()
 
 # ===== DATABASE (Turso) =====
 
+_db_conn = None
+
 def get_db():
     global _db_conn
     if _db_conn is None:
