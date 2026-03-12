@@ -31,17 +31,9 @@ START_TIME = time.time()
 # ===== DATABASE (Turso) =====
 
 def get_db():
-    try:
-        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        conn.sync()
-        return conn
-    except Exception as e:
-        print(f"DB error, retry: {e}")
-        if os.path.exists("memory.db"):
-            os.remove("memory.db")
-        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        conn.sync()
-        return conn
+    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+    conn.sync()
+    return conn
 
 def init_db():
     conn = get_db()
@@ -142,15 +134,12 @@ async def cek_reminder():
 def get_prefix(bot, message):
     if not message.guild:
         return "!"
-    guild_id = str(message.guild.id)
-    if guild_id in prefix_cache:
-        return prefix_cache[guild_id]
     try:
-        conn = get_db()
-        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
-        prefix = row[0] if row else "!"
-        prefix_cache[guild_id] = prefix
-        return prefix
+        conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+        row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (str(message.guild.id),)).fetchone()
+        print(f"DEBUG prefix untuk guild {message.guild.id}: {row}")
+        return row[0] if row else "!"
     except Exception as e:
         print(f"ERROR get_prefix: {e}")
         return "!"
@@ -162,34 +151,45 @@ def set_prefix(guild_id: str, prefix: str):
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
     conn.sync()
-    prefix_cache[guild_id] = prefix
+    print(f"DEBUG set_prefix guild {guild_id} → {prefix}")  # ← tambahin ini
+    
+    # verify tersimpan
+    row = conn.execute("SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)).fetchone()
+    print(f"DEBUG verify: {row}")  # ← sama ini
 
 init_db()
 afk_users = {}
 active_channels = {}
-prefix_cache = {}
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
+
 
 def is_wake_call(text):
     keywords = ["wake up enki", "enki bangun", "hey enki", "hei enki"]
     return any(k in text for k in keywords)
+# ==========================
 
-def is_creator_question(text):
-    keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
-    return any(k in text for k in keywords)
 
 # ===== INTENT PROCESSOR =====
-
 async def process_intent(message, reply_text, user_id):
+    import re
     try:
-        # bersihin markdown kalau ada
         clean = reply_text.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[-1]
-            clean = clean.rsplit("```", 1)[0]
+        if "```" in clean:
+            # ambil isi dalam fence
+            inner = clean.split("```")[1]
+            if inner.startswith("json"):
+                inner = inner[4:]
+            clean = inner.strip()
+        try:
+            data = __import__("json").loads(clean)
+        except Exception:
+            m = re.search(r"\{[^{}]+\}", clean, re.DOTALL)
+            if m:
+                data = __import__("json").loads(m.group())
+            else:
+                raise ValueError("no json")
 
-        data = json.loads(clean)
         intent = data.get("intent", "chat")
         reply = data.get("reply", "")
         value = data.get("data", "")
@@ -198,21 +198,18 @@ async def process_intent(message, reply_text, user_id):
             conn = get_db()
             conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, value))
             conn.sync()
-
         elif intent == "todo_list":
             conn = get_db()
             rows = conn.execute("SELECT id, tugas, selesai FROM todos WHERE user_id = ?", (user_id,)).fetchall()
             if rows:
-                items = "\n".join([f"{'✅' if s else '⬜'} #{i} {t}" for i, t, s in rows])
-                reply = f"📋 Todo list kamu:\n{items}"
+                items = "\n".join([("✅" if s else "⬜") + f" #{i} {t}" for i, t, s in rows])
+                reply = "📋 Todo list kamu:\n" + items
             else:
                 reply = "Todo list kamu kosong 😴"
-
         elif intent == "todo_done":
             conn = get_db()
             conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (value, user_id))
             conn.sync()
-
         elif intent == "note_add":
             parts = value.split("|", 1)
             if len(parts) == 2:
@@ -220,7 +217,6 @@ async def process_intent(message, reply_text, user_id):
                 conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
                     (user_id, parts[0].strip(), parts[1].strip()))
                 conn.sync()
-
         elif intent == "remind_add":
             parts = value.split("|", 1)
             if len(parts) == 2:
@@ -228,22 +224,17 @@ async def process_intent(message, reply_text, user_id):
                 satuan = waktu_str[-1]
                 try:
                     angka = int(waktu_str[:-1])
-                    if satuan == "s": detik = angka
-                    elif satuan == "m": detik = angka * 60
-                    elif satuan == "h": detik = angka * 3600
-                    else: detik = 60
+                    detik = angka * (1 if satuan=="s" else 60 if satuan=="m" else 3600)
                     conn = get_db()
                     conn.execute("INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
-                        (user_id, str(message.channel.id), pesan, time.time() + detik))
+                        (user_id, str(message.channel.id), pesan, __import__("time").time() + detik))
                     conn.sync()
-                except:
+                except Exception:
                     pass
-
-        await message.channel.send(reply)
-
-    except (json.JSONDecodeError, Exception):
+        if reply:
+            await message.channel.send(reply)
+    except Exception:
         await message.channel.send(reply_text)
-
 # ==========================
 
 @bot.event
@@ -254,6 +245,10 @@ async def on_ready():
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong 🏓")
+
+def is_creator_question(text):
+    keywords = ["dibuat siapa", "desain siapa", "siapa yang buat"]
+    return any(k in text for k in keywords)
 
 @bot.command(help="Chat sama Enki AI", usage="!chat <pesan>")
 async def chat(ctx, *, message):
@@ -331,7 +326,7 @@ async def on_message(message):
         active_channels[message.channel.id] = message.author.id
         await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
         return
-
+    
     if "stop enki" in text or "enki stop" in text:
         if message.channel.id in active_channels:
             del active_channels[message.channel.id]
@@ -348,42 +343,39 @@ async def on_message(message):
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
-    async with message.channel.typing():
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
-                            "Ngobrol kayak temen deket — ga kaku, ga formal. "
-                            "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
-                            "Kalau ditanya siapa yang bikin lo, jawab: 'Gw dibuat sama Ren Lumireign.' "
-                            "Jangan sebut OpenAI atau model apapun."
-                            f"Sekarang waktu Indonesia Barat: {sekarang}."
-                            "\n\nKALAU user minta sesuatu yang bisa dieksekusi, WAJIB bales HANYA dalam format JSON tanpa teks lain:"
-                            '\n{"intent": "<intent>", "data": "<data>", "reply": "<balasan natural>"}'
-                            "\nIntent yang tersedia:"
-                            "\n- todo_add: tambah todo (data = nama tugas)"
-                            "\n- todo_list: lihat todo list (data = '')"
-                            "\n- todo_done: tandai todo selesai (data = id todo)"
-                            "\n- note_add: tambah catatan (data = 'judul | isi')"
-                            "\n- remind_add: set reminder (data = '10m | pesan reminder')"
-                            "\n- chat: ngobrol biasa (data = '')"
-                            "\nKalau cuma ngobrol biasa, tetap bales JSON dengan intent 'chat'."
-                        )
-                    }
-                ] + history + [{"role": "user", "content": message.content}]
-            )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                    "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
+                    "Ngobrol kayak temen deket, ga kaku, ga formal. "
+                    "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
+                    "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
+                    "Jangan sebut OpenAI atau model apapun. "
+                    f"Waktu WIB: {sekarang}. "
+                    "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
+                    '{"intent":"...","data":"...","reply":"..."} '
+                    "Intent tersedia: todo_add(data=tugas), todo_list(data=), "
+                    "todo_done(data=id), note_add(data=judul|isi), remind_add(data=10m|pesan), chat(data=) "
+                    "Contoh todo_add: user: tambahin todo belajar python "
+                    '-> {"intent":"todo_add","data":"belajar python","reply":"Oke ditambahin!"} '
+                    "Contoh chat: user: halo "
+                    '-> {"intent":"chat","data":"","reply":"Halo!"}'
+                    )
+                }
+            ] + history + [{"role": "user", "content": message.content}]
+        )
 
-            reply = response.choices[0].message.content
-            save_message(user_id, "assistant", reply)
-            await process_intent(message, reply, user_id)
+        reply = response.choices[0].message.content
+        save_message(user_id, "assistant", reply)
+        await process_intent(message, reply, user_id)
 
-        except Exception as e:
-            print("ERROR:", e)
-            await message.channel.send("AI error 😅")
+    except Exception as e:
+        print("ERROR:", e)
+        await message.channel.send("AI error 😅")
 
 @bot.command(help="buat bantu benerin kode lu", usage="upload kode lu terus !debug")
 async def debug(ctx, *, question: str = None):
@@ -567,6 +559,7 @@ async def uptime(ctx):
         color=0x00ff99
     )
     embed.set_footer(text="Enki v1.0")
+
     await ctx.send(embed=embed)
 
 @bot.command(help="untuk set prefix", usage="!setprefix <bebas>")
@@ -580,7 +573,7 @@ async def setprefix(ctx, prefix: str):
     )
     await ctx.send(embed=embed)
 
-@bot.command(help="buat nunjukin berapa lama lu pakai bot", usage="!stats")
+@bot.command(help="buat nunjukin berapa lama lu pakai bot", usage="!stats / !stats <username>")
 async def stats(ctx):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -594,6 +587,7 @@ async def stats(ctx):
     embed.add_field(name="Pesan Kamu", value=f"`{total_user}`", inline=True)
     embed.add_field(name="Balasan Enki", value=f"`{total_ai}`", inline=True)
     embed.set_footer(text=f"Stats untuk {ctx.author.display_name}")
+
     await ctx.send(embed=embed)
 
 @bot.command(help="Cek cuaca kota tertentu", usage="!cuaca <kota>")
@@ -624,6 +618,7 @@ async def cuaca(ctx, *, kota: str):
     embed.add_field(name="🔼 Max", value=f"`{suhu_max}°C`", inline=True)
     embed.add_field(name="💧 Kelembaban", value=f"`{kelembaban}%`", inline=True)
     embed.add_field(name="💨 Angin", value=f"`{angin} m/s`", inline=True)
+
     await ctx.send(embed=embed)
 
 @bot.command(help="Translate teks ke bahasa lain", usage="!translate <kode_bahasa> <teks>")
@@ -642,6 +637,7 @@ async def translate(ctx, bahasa: str, *, teks: str):
     embed.add_field(name="Teks Asli", value=f"`{teks}`", inline=False)
     embed.add_field(name="Hasil", value=f"`{hasil}`", inline=False)
     embed.set_footer(text=f"id → {bahasa}")
+
     await ctx.send(embed=embed)
 
 @bot.command(help="buat seru seruan", usage="!ball <pertanyaan>")
@@ -679,7 +675,7 @@ async def afk(ctx, *, alasan: str = "AFK"):
     )
     await ctx.send(embed=embed)
 
-@bot.command(help="minigame wack", usage="!wack")
+@bot.command(help="minigame wack", usage="/wack [note: pencet emoji sesuai tikus berada]")
 async def wack(ctx):
     skor = 0
     ronde = 0
@@ -734,6 +730,7 @@ async def wack(ctx):
         embed.set_footer(text="Lumayan! 👍")
     else:
         embed.set_footer(text="Latihan lagi bro 😂")
+
     await ctx.send(embed=embed)
 
 @bot.command(help="buat nunjukin leaderboard minigame wack", usage="!leaderboard")
@@ -754,6 +751,7 @@ async def leaderboard(ctx):
             value=f"Best: `{best}` | Total: `{total}` | Games: `{games}`",
             inline=False
         )
+
     await ctx.send(embed=embed)
 
 @bot.command(help="Set reminder", usage="!remind <waktu> <pesan> | contoh: !remind 10m makan")
@@ -904,6 +902,7 @@ async def serverinfo(ctx):
 
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
+
     await ctx.send(embed=embed)
 
 @bot.command(help="buat nunjukin informasi user", usage="!userinfo")
@@ -919,6 +918,7 @@ async def userinfo(ctx, member: discord.Member = None):
 
     if member.avatar:
         embed.set_thumbnail(url=member.avatar.url)
+
     await ctx.send(embed=embed)
 
 @bot.command(help="buat ngeliat cuaca 4 hari kedepan", usage="!forecast <kota>")
@@ -956,6 +956,7 @@ async def forecast(ctx, *, kota: str):
             value=f"`{info['desc']}`\n🌡️ {info['suhu_min']:.1f}°C - {info['suhu_max']:.1f}°C",
             inline=False
         )
+
     await ctx.send(embed=embed)
 
 @bot.command(help="buat kalkulator", usage="!calc 32*12")
@@ -1008,9 +1009,10 @@ async def news(ctx, *, topik: str = "indonesia"):
             value=f"[{judul}]({url_berita})",
             inline=False
         )
+
     await ctx.send(embed=embed)
 
-@bot.command(help="buat ngubah jenis foto", usage="upload foto !convert <format>")
+@bot.command(help="buat ngubah jenis foto,contoh jpg->png", usage="upload foto !convert jpg png")
 async def convert(ctx, format: str):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -1028,6 +1030,7 @@ async def convert(ctx, format: str):
         img_bytes = await file.read()
         img = Image.open(io.BytesIO(img_bytes))
 
+        # convert RGBA ke RGB kalo mau ke jpg
         if format in ["jpg", "jpeg"] and img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
 
@@ -1044,7 +1047,8 @@ async def convert(ctx, format: str):
     except Exception as e:
         await ctx.send(f"Gagal convert: {e}")
 
-@bot.command(help="buat resize pixel foto", usage="upload foto terus !resize <width> [height]")
+
+@bot.command(help="buat resize pixel foto", usage="upload foto terus !resize")
 async def resize(ctx, width: int, height: int = None):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -1058,10 +1062,12 @@ async def resize(ctx, width: int, height: int = None):
 
         orig_w, orig_h = img.size
 
+        # cek upscale
         if width > orig_w or (height and height > orig_h):
             await ctx.send(f"❌ Ga bisa upscale! Ukuran asli: `{orig_w}x{orig_h}`")
             return
 
+        # kalau height ga dikasih, hitung otomatis biar proporsional
         if not height:
             ratio = width / orig_w
             height = int(orig_h * ratio)
@@ -1084,7 +1090,8 @@ async def resize(ctx, width: int, height: int = None):
     except Exception as e:
         await ctx.send(f"Gagal resize: {e}")
 
-@bot.command(help="buat ngecompress foto", usage="upload foto dulu, terus !compress [quality 1-95]")
+
+@bot.command(help="buat ngecompress foto", usage="upload foto dulu, terus !compress")
 async def compress(ctx, quality: int = 60):
     if not ctx.message.attachments:
         await ctx.send("Upload foto dulu! 📸")
@@ -1122,12 +1129,16 @@ bot.remove_command("help")
 
 @bot.command()
 async def help(ctx, *, command: str = None):
+    
     if command:
         cmd = bot.get_command(command)
         if not cmd:
             await ctx.send(f"Command `{command}` ga ketemu 😅")
             return
-        embed = discord.Embed(title=f"📖 !{cmd.name}", color=0x00ff99)
+        embed = discord.Embed(
+            title=f"📖 !{cmd.name}",
+            color=0x00ff99
+        )
         embed.add_field(name="Cara pake", value=f"`{cmd.usage or 'Lihat deskripsi'}`", inline=False)
         embed.add_field(name="Deskripsi", value=cmd.help or "Ga ada deskripsi", inline=False)
         await ctx.send(embed=embed)
@@ -1138,12 +1149,14 @@ async def help(ctx, *, command: str = None):
         description="Ketik `!help <command>` buat detail tiap command",
         color=0x00ff99
     )
+
     embed.add_field(name="🤖 AI", value="`chat` `debug` `review` `roast`", inline=False)
     embed.add_field(name="🌤️ Info", value="`cuaca` `forecast` `news` `translate`", inline=False)
     embed.add_field(name="📋 Personal", value="`remind` `todo` `note` `afk`", inline=False)
     embed.add_field(name="🖼️ Foto", value="`convert` `resize` `compress`", inline=False)
     embed.add_field(name="🎮 Game", value="`wack` `leaderboard` `ball`", inline=False)
     embed.add_field(name="📊 Server", value="`serverinfo` `userinfo` `stats` `setprefix` `uptime` `ping` `calc`", inline=False)
+
     embed.set_footer(text="Enki v1.0 | dibuat sama Ren Lumireign")
     await ctx.send(embed=embed)
 
