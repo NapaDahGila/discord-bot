@@ -33,11 +33,9 @@ START_TIME = time.time()
 _db_conn = None
 
 def get_db():
-    global _db_conn
-    if _db_conn is None:
-        _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        _db_conn.sync()
-    return _db_conn
+    conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+    conn.sync()
+    return conn
 
 def init_db():
     conn = get_db()
@@ -259,6 +257,97 @@ async def process_intent(message, reply_text, user_id):
                     print(f"[INTENT] remind_add ERROR: {db_err}")
                     reply = "Gagal set reminder 😅"
 
+        elif intent == "cuaca":
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"http://api.openweathermap.org/data/2.5/weather?q={value}&appid={WEATHER_KEY}&units=metric&lang=id"
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            reply = f"Kota `{value}` ga ketemu 😅"
+                        else:
+                            d = await resp.json()
+                            desc = d["weather"][0]["description"]
+                            suhu = d["main"]["temp"]
+                            kelembaban = d["main"]["humidity"]
+                            angin = d["wind"]["speed"]
+                            reply = (f"🌤️ Cuaca di **{value.title()}**\n"
+                                     f"Kondisi: `{desc}`\n"
+                                     f"🌡️ Suhu: `{suhu}°C` | 💧 Kelembaban: `{kelembaban}%` | 💨 Angin: `{angin} m/s`")
+            except Exception as e:
+                print(f"[INTENT] cuaca ERROR: {e}")
+                reply = "Gagal ngambil data cuaca 😅"
+
+        elif intent == "forecast":
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"http://api.openweathermap.org/data/2.5/forecast?q={value}&appid={WEATHER_KEY}&units=metric&lang=id&cnt=24"
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            reply = f"Kota `{value}` ga ketemu 😅"
+                        else:
+                            d = await resp.json()
+                            hari = {}
+                            for item in d["list"]:
+                                tanggal = item["dt_txt"].split(" ")[0]
+                                if tanggal not in hari:
+                                    hari[tanggal] = {
+                                        "desc": item["weather"][0]["description"],
+                                        "min": item["main"]["temp_min"],
+                                        "max": item["main"]["temp_max"],
+                                    }
+                                else:
+                                    hari[tanggal]["min"] = min(hari[tanggal]["min"], item["main"]["temp_min"])
+                                    hari[tanggal]["max"] = max(hari[tanggal]["max"], item["main"]["temp_max"])
+                            lines = [f"🌤️ Forecast **{value.title()}**"]
+                            for tanggal, info in list(hari.items())[:4]:
+                                lines.append(f"📅 {tanggal}: `{info['desc']}` {info['min']:.1f}°C - {info['max']:.1f}°C")
+                            reply = "\n".join(lines)
+            except Exception as e:
+                print(f"[INTENT] forecast ERROR: {e}")
+                reply = "Gagal ngambil forecast 😅"
+
+        elif intent == "news":
+            try:
+                topik = value if value else "indonesia"
+                async with aiohttp.ClientSession() as session:
+                    url = f"https://newsapi.org/v2/everything?q={topik}&language=id&sortBy=publishedAt&pageSize=5&apiKey={NEWS_KEY}"
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            reply = "Gagal ngambil berita 😅"
+                        else:
+                            d = await resp.json()
+                            articles = d.get("articles", [])
+                            if not articles:
+                                reply = f"Ga ada berita tentang `{topik}` 😅"
+                            else:
+                                lines = [f"📰 Berita terkini: **{topik.title()}**"]
+                                for a in articles[:5]:
+                                    lines.append(f"📌 [{a['title']}]({a['url']}) — _{a['source']['name']}_")
+                                reply = "\n".join(lines)
+            except Exception as e:
+                print(f"[INTENT] news ERROR: {e}")
+                reply = "Gagal ngambil berita 😅"
+
+        elif intent == "translate":
+            try:
+                parts = value.split("|", 1)
+                if len(parts) == 2:
+                    bahasa, teks = parts[0].strip(), parts[1].strip()
+                    async with aiohttp.ClientSession() as session:
+                        url = f"https://api.mymemory.translated.net/get?q={teks}&langpair=id|{bahasa}"
+                        async with session.get(url) as resp:
+                            if resp.status != 200:
+                                reply = "Gagal translate 😅"
+                            else:
+                                d = await resp.json()
+                                hasil = d["responseData"]["translatedText"]
+                                reply = f"🌐 **Translate** (id → {bahasa})\n`{teks}` → `{hasil}`"
+                else:
+                    reply = "Format translate salah. Contoh: 'translate ke en teks kamu'"
+            except Exception as e:
+                print(f"[INTENT] translate ERROR: {e}")
+                reply = "Gagal translate 😅"
+
         if reply:
             await message.channel.send(reply)
 
@@ -393,8 +482,16 @@ async def on_message(message):
                             f"Waktu WIB: {sekarang}. "
                             "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
                             '{"intent":"...","data":"...","reply":"..."} '
-                            "Intent tersedia: todo_add(data=tugas), todo_list(data=), "
-                            "todo_done(data=id), note_add(data=judul|isi), remind_add(data=10m|pesan), chat(data=) "
+                            "Intent tersedia: todo_add(data=tugas), todo_list(data=), todo_done(data=id), "
+                            "note_add(data=judul|isi), remind_add(data=10m|pesan), "
+                            "cuaca(data=nama_kota), forecast(data=nama_kota), "
+                            "news(data=topik_opsional), translate(data=en|teks yang mau ditranslate), chat(data=) "
+                            "Contoh cuaca: user: cuaca jakarta "
+                            '-> {"intent":"cuaca","data":"jakarta","reply":"Oke gw cek cuacanya!"} '
+                            "Contoh news: user: berita terbaru tentang teknologi "
+                            '-> {"intent":"news","data":"teknologi","reply":"Oke gw cariin!"} '
+                            "Contoh translate: user: translate ke inggris halo dunia "
+                            '-> {"intent":"translate","data":"en|halo dunia","reply":"Oke gw translatein!"} '
                             "Contoh todo_add: user: tambahin todo belajar python "
                             '-> {"intent":"todo_add","data":"belajar python","reply":"Oke ditambahin!"} '
                             "Contoh chat: user: halo "
