@@ -93,6 +93,11 @@ def init_db():
             judul     TEXT NOT NULL,
             isi       TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id     TEXT PRIMARY KEY,
+            nickname    TEXT,
+            preferences TEXT DEFAULT '{}'
+        );
     """)
     conn.sync()
 
@@ -121,6 +126,32 @@ def save_message(user_id: str, role: str, content: str):
 def reset_memory(user_id: str):
     conn = get_db()
     conn.execute("DELETE FROM memory WHERE user_id = ?", (user_id,))
+    conn.sync()
+
+def get_profile(user_id: str) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT nickname, preferences FROM user_profiles WHERE user_id = ?", (user_id,)).fetchone()
+    if row:
+        nickname, prefs_str = row
+        try:
+            prefs = json.loads(prefs_str or "{}")
+        except Exception:
+            prefs = {}
+        return {"nickname": nickname, "preferences": prefs}
+    return {"nickname": None, "preferences": {}}
+
+def save_profile(user_id: str, nickname: str = None, preferences: dict = None):
+    conn = get_db()
+    current = get_profile(user_id)
+    new_nickname = nickname if nickname is not None else current["nickname"]
+    new_prefs = preferences if preferences is not None else current["preferences"]
+    conn.execute("""
+        INSERT INTO user_profiles (user_id, nickname, preferences)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            nickname = ?,
+            preferences = ?
+    """, (user_id, new_nickname, json.dumps(new_prefs), new_nickname, json.dumps(new_prefs)))
     conn.sync()
 
 def save_wack_score(user_id: str, username: str, skor: int, total: int):
@@ -348,6 +379,24 @@ async def process_intent(message, reply_text, user_id):
             except Exception as db_err:
                 print(f"[INTENT] note_delete ERROR: {db_err}")
                 reply = "Gagal hapus catatan 😅"
+
+        elif intent == "profile_update":
+            try:
+                parts = value.split("|")
+                updates = {}
+                nickname = None
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith("nickname:"):
+                        nickname = part.replace("nickname:", "").strip()
+                    elif ":" in part:
+                        k, v = part.split(":", 1)
+                        updates[k.strip()] = v.strip()
+                save_profile(user_id, nickname=nickname, preferences=updates if updates else None)
+                print(f"[INTENT] profile_update OK: nickname={nickname} prefs={updates}")
+            except Exception as db_err:
+                print(f"[INTENT] profile_update ERROR: {db_err}")
+                reply = "Gagal update profil 😅"
 
         elif intent == "cuaca":
             try:
@@ -581,6 +630,14 @@ async def on_message(message):
     history = load_memory(user_id)
     save_message(user_id, "user", message.content)  # simpan teks biasa, bukan JSON
 
+    # Load user profile
+    profile = get_profile(user_id)
+    nickname = profile["nickname"] or message.author.display_name
+    prefs = profile["preferences"]
+    profile_info = f"Nama panggilan user: {nickname}. "
+    if prefs:
+        profile_info += "Preferensi user: " + ", ".join([f"{k}={v}" for k, v in prefs.items()]) + ". "
+
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
@@ -599,6 +656,7 @@ async def on_message(message):
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
                             "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
+                            f"{profile_info}"
                             f"Waktu WIB: {sekarang}. "
                             "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
                             '{"intent":"...","data":"...","reply":"..."} '
@@ -607,7 +665,7 @@ async def on_message(message):
                             "note_add(data=judul|isi), note_list(data=), note_get(data=id), note_delete(data=id), "
                             "remind_add(data=10m|pesan), "
                             "cuaca(data=nama_kota), forecast(data=nama_kota), "
-                            "news(data=topik_opsional), translate(data=en|teks), chat(data=) "
+                            "news(data=topik_opsional), translate(data=en|teks), ""profile_update(data=nickname:nama|key:value), chat(data=) "
                             "Contoh-contoh: "
                             "user: tambahin todo belajar python -> {\"intent\":\"todo_add\",\"data\":\"belajar python\",\"reply\":\"Sip, gw tambahin!\"} "
                             "user: hapus todo 2 -> {\"intent\":\"todo_delete\",\"data\":\"2\",\"reply\":\"Oke dihapus!\"} "
@@ -615,7 +673,7 @@ async def on_message(message):
                             "user: liat catatan 1 -> {\"intent\":\"note_get\",\"data\":\"1\",\"reply\":\"Nih isinya!\"} "
                             "user: hapus catatan 3 -> {\"intent\":\"note_delete\",\"data\":\"3\",\"reply\":\"Oke dihapus!\"} "
                             "user: cuaca jakarta -> {\"intent\":\"cuaca\",\"data\":\"jakarta\",\"reply\":\"Gw cek dulu!\"} "
-                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} "
+                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} ""user: panggil gw Ren -> {\"intent\":\"profile_update\",\"data\":\"nickname:Ren\",\"reply\":\"Sip, gw panggil lo Ren!\"} ""user: gw suka musik jazz -> {\"intent\":\"profile_update\",\"data\":\"musik:jazz\",\"reply\":\"Noted, lo suka jazz!\"} "
                             "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
                         )
                     }
