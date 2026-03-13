@@ -550,7 +550,7 @@ async def chat(ctx, *, message):
                             "Jangan basa-basi panjang, langsung jawab intinya. "
                             "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab Renlumireign, dan sesuai bahasa user. "
+                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}."
                         )
@@ -603,7 +603,9 @@ async def on_message(message):
 
     if is_wake_call(text):
         active_channels[message.channel.id] = message.author.id
-        await message.channel.send(f"Hai {message.author.display_name}! Ada yang bisa gw bantu? 👋")
+        profile_wake = get_profile(str(message.author.id))
+        nama_wake = profile_wake["nickname"] or message.author.display_name
+        await message.channel.send(f"Hai {nama_wake}! Ada yang bisa gw bantu? 👋")
         return
 
     if "stop enki" in text or "enki stop" in text:
@@ -654,7 +656,7 @@ async def on_message(message):
                             "Jangan basa-basi panjang, langsung jawab intinya. "
                             "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab RenLumireign, dan sesuai bahasa user. "
+                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"{profile_info}"
                             f"Waktu WIB: {sekarang}. "
