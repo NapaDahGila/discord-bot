@@ -56,6 +56,11 @@ def get_db():
 
 def init_db():
     conn = get_db()
+    # Sync dulu untuk pull data terbaru dari Turso sebelum buat tabel
+    try:
+        conn.sync()
+    except Exception:
+        pass
     tables = [
         """CREATE TABLE IF NOT EXISTS memory (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,6 +106,8 @@ def init_db():
     ]
     for sql in tables:
         conn.execute(sql)
+    # Sync dua kali: push tabel baru ke Turso, lalu pull data yang ada
+    conn.sync()
     conn.sync()
 
 def load_memory(user_id: str, limit: int = 15) -> list:
