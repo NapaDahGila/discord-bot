@@ -550,7 +550,7 @@ async def chat(ctx, *, message):
                             "Jangan basa-basi panjang, langsung jawab intinya. "
                             "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
+                            "Kalau ditanya siapa yang bikin lo: jawab Renlumireign, dan sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}."
                         )
@@ -654,7 +654,7 @@ async def on_message(message):
                             "Jangan basa-basi panjang, langsung jawab intinya. "
                             "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
+                            "Kalau ditanya siapa yang bikin lo: jawab RenLumireign, dan sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"{profile_info}"
                             f"Waktu WIB: {sekarang}. "
