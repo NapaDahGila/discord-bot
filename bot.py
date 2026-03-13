@@ -118,6 +118,11 @@ def save_message(user_id: str, role: str, content: str):
     """, (user_id, user_id))
     conn.sync()
 
+def reset_memory(user_id: str):
+    conn = get_db()
+    conn.execute("DELETE FROM memory WHERE user_id = ?", (user_id,))
+    conn.sync()
+
 def save_wack_score(user_id: str, username: str, skor: int, total: int):
     conn = get_db()
     conn.execute("""
@@ -436,7 +441,10 @@ async def process_intent(message, reply_text, user_id):
                 reply = "Gagal translate 😅"
 
         if reply:
-            await message.channel.send(reply)
+            # Kirim pake embed biar lebih rapi
+            embed = discord.Embed(description=reply, color=0x5865F2)
+            embed.set_footer(text=f"Enki • {datetime.now(pytz.timezone('Asia/Jakarta')).strftime('%H:%M')}")
+            await message.channel.send(embed=embed)
 
     except Exception as e:
         print(f"[INTENT] OUTER ERROR: {e} | raw: {repr(reply_text[:100])}")
@@ -491,8 +499,9 @@ async def chat(ctx, *, message):
                             "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
                             "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
                             "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "Pake bahasa Indonesia yang natural, boleh campur sedikit bahasa Inggris. "
-                            "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
+                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
+                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
+                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}."
                         )
@@ -506,7 +515,9 @@ async def chat(ctx, *, message):
             if len(reply) > 2000:
                 reply = reply[:1990] + "..."
 
-            await ctx.send(reply)
+            embed = discord.Embed(description=reply, color=0x5865F2)
+            embed.set_footer(text=f"Enki • {datetime.now(pytz.timezone('Asia/Jakarta')).strftime('%H:%M')}")
+            await ctx.send(embed=embed)
 
         except Exception as e:
             print("ERROR:", e)
@@ -552,6 +563,16 @@ async def on_message(message):
             await message.channel.send("Oke gw diam dulu 👋")
         return
 
+    if "reset enki" in text or "enki reset" in text:
+        user_id_reset = str(message.author.id)
+        reset_memory(user_id_reset)
+        embed = discord.Embed(
+            description="🧹 Percakapan kita udah direset. Mulai dari awal!",
+            color=0x00ff99
+        )
+        await message.channel.send(embed=embed)
+        return
+
     if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
@@ -574,8 +595,9 @@ async def on_message(message):
                             "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
                             "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
                             "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "Pake bahasa Indonesia yang natural, boleh campur sedikit bahasa Inggris. "
-                            "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
+                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
+                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
+                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}. "
                             "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
