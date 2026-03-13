@@ -138,16 +138,26 @@ def get_leaderboard():
 async def cek_reminder():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        sekarang = time.time()
-        conn = get_db()
-        rows = conn.execute("SELECT id, user_id, channel_id, pesan FROM reminders WHERE waktu <= ?", (sekarang,)).fetchall()
-        for row in rows:
-            id, user_id, channel_id, pesan = row
-            channel = bot.get_channel(int(channel_id))
-            if channel:
-                await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
-            conn.execute("DELETE FROM reminders WHERE id = ?", (id,))
-        conn.sync()
+        try:
+            sekarang = time.time()
+            conn = get_db()
+            rows = conn.execute("SELECT id, user_id, channel_id, pesan FROM reminders WHERE waktu <= ?", (sekarang,)).fetchall()
+            for row in rows:
+                id, user_id, channel_id, pesan = row
+                channel = bot.get_channel(int(channel_id))
+                if channel:
+                    await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
+                conn.execute("DELETE FROM reminders WHERE id = ?", (id,))
+            conn.sync()
+        except Exception as e:
+            print(f"[REMINDER] Error: {e}, retrying in 5s...")
+            global _db_conn
+            _db_conn = None  # force reconnect next time
+            await asyncio.sleep(5)
+            try:
+                init_db()  # pastiin tabel ada setelah reconnect
+            except Exception as e2:
+                print(f"[REMINDER] init_db failed: {e2}")
         await asyncio.sleep(1)
 
 def get_prefix(bot, message):
@@ -437,6 +447,10 @@ async def process_intent(message, reply_text, user_id):
 @bot.event
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
+    try:
+        init_db()  # pastiin tabel ada setiap bot ready
+    except Exception as e:
+        print(f"[READY] init_db error: {e}")
     asyncio.ensure_future(cek_reminder())
 
 @bot.command()
