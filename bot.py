@@ -154,14 +154,13 @@ def save_profile(user_id: str, nickname: str = None, preferences: dict = None):
     current = get_profile(user_id)
     new_nickname = nickname if nickname is not None else current["nickname"]
     new_prefs = preferences if preferences is not None else current["preferences"]
-    conn.execute("""
-        INSERT INTO user_profiles (user_id, nickname, preferences)
-        VALUES (?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            nickname = ?,
-            preferences = ?
-    """, (user_id, new_nickname, json.dumps(new_prefs), new_nickname, json.dumps(new_prefs)))
+    conn.execute("DELETE FROM user_profiles WHERE user_id = ?", (user_id,))
+    conn.execute(
+        "INSERT INTO user_profiles (user_id, nickname, preferences) VALUES (?, ?, ?)",
+        (user_id, new_nickname, json.dumps(new_prefs))
+    )
     conn.sync()
+    print(f"[PROFILE] saved user_id={user_id} nickname={new_nickname}")
 
 def save_wack_score(user_id: str, username: str, skor: int, total: int):
     conn = get_db()
