@@ -197,6 +197,12 @@ def is_wake_call(text):
     keywords = ["wake up enki", "enki bangun", "hey enki", "hei enki"]
     return any(k in text for k in keywords)
 
+def strip_thinking(text: str) -> str:
+    """Hapus <think>...</think> dari response DeepSeek R1"""
+    import re
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    return text.strip()
+
 # ===== INTENT PROCESSOR =====
 async def process_intent(message, reply_text, user_id):
     import re
@@ -477,7 +483,7 @@ async def chat(ctx, *, message):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="deepseek-r1-distill-llama-70b",
                 messages=[
                     {
                         "role": "system",
@@ -494,7 +500,7 @@ async def chat(ctx, *, message):
                 ] + history + [{"role": "user", "content": message}]
             )
 
-            reply = response.choices[0].message.content or "AI gak ngasih respon 😅"
+            reply = strip_thinking(response.choices[0].message.content or "AI gak ngasih respon 😅")
             save_message(user_id, "assistant", reply)
 
             if len(reply) > 2000:
@@ -560,7 +566,7 @@ async def on_message(message):
     async with message.channel.typing():
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="deepseek-r1-distill-llama-70b",
                 messages=[
                     {
                         "role": "system",
@@ -594,7 +600,7 @@ async def on_message(message):
                 ] + history + [{"role": "user", "content": message.content}]
             )
 
-            raw = response.choices[0].message.content
+            raw = strip_thinking(response.choices[0].message.content or "")
 
             # Parse reply bersih untuk disimpan ke memory (bukan raw JSON)
             try:
@@ -646,7 +652,7 @@ async def debug(ctx, *, question: str = None):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="deepseek-r1-distill-llama-70b",
                 messages=[
                     {
                         "role": "system",
@@ -660,7 +666,7 @@ async def debug(ctx, *, question: str = None):
                 ]
             )
 
-            reply = response.choices[0].message.content
+            reply = strip_thinking(response.choices[0].message.content or "")
 
             if len(reply) > 2000:
                 file_output = io.BytesIO(reply.encode("utf-8"))
@@ -698,7 +704,7 @@ async def roast(ctx):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="deepseek-r1-distill-llama-70b",
                 messages=[
                     {
                         "role": "system",
@@ -714,7 +720,7 @@ async def roast(ctx):
                 ]
             )
 
-            reply = response.choices[0].message.content
+            reply = strip_thinking(response.choices[0].message.content or "")
 
             if len(reply) <= 2000:
                 await ctx.reply(reply)
@@ -756,7 +762,7 @@ async def review(ctx, *, question: str = None):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="deepseek-r1-distill-llama-70b",
                 messages=[
                     {
                         "role": "system",
@@ -771,7 +777,7 @@ async def review(ctx, *, question: str = None):
                 ]
             )
 
-            reply = response.choices[0].message.content
+            reply = strip_thinking(response.choices[0].message.content or "")
 
             if len(reply) <= 2000:
                 await ctx.reply(reply)
