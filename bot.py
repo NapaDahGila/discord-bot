@@ -31,6 +31,7 @@ START_TIME = time.time()
 # ===== DATABASE (Turso) =====
 
 _db_conn = None
+_prefix_cache = {}
 
 def get_db():
     global _db_conn
@@ -149,8 +150,6 @@ async def cek_reminder():
         conn.sync()
         await asyncio.sleep(1)
 
-_prefix_cache = {}
-
 def get_prefix(bot, message):
     if not message.guild:
         return "!"
@@ -198,14 +197,20 @@ async def process_intent(message, reply_text, user_id):
             if inner.startswith("json"):
                 inner = inner[4:]
             clean = inner.strip()
+        # Coba parse JSON, dengan beberapa fallback
+        data = None
         try:
             data = json.loads(clean)
         except Exception:
-            m = re.search(r"\{[^{}]+\}", clean, re.DOTALL)
+            # Coba cari JSON object yang ada "intent" di dalamnya
+            m = re.search(r'\{[^{}]*"intent"[^{}]*\}', clean, re.DOTALL)
             if m:
-                data = json.loads(m.group())
-            else:
-                raise ValueError("no json")
+                try:
+                    data = json.loads(m.group())
+                except Exception:
+                    pass
+        if data is None:
+            raise ValueError("no json found")
 
         intent = data.get("intent", "chat")
         reply = data.get("reply", "")
@@ -419,7 +424,14 @@ async def process_intent(message, reply_text, user_id):
 
     except Exception as e:
         print(f"[INTENT] OUTER ERROR: {e} | raw: {repr(reply_text[:100])}")
-        await message.channel.send(reply_text)
+        # Jangan kirim raw JSON ke user, coba extract reply dulu
+        import re
+        m = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', reply_text)
+        if m:
+            await message.channel.send(m.group(1))
+        else:
+            # Kalau beneran ga bisa parse, kirim pesan generic
+            await message.channel.send("Hmm, gw lagi error dikit 😅 Coba lagi?")
 # ==========================
 
 @bot.event
@@ -456,12 +468,10 @@ async def chat(ctx, *, message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
-                            "Ngobrol kayak temen deket, ga kaku, ga formal. "
-                            "Gaya lo kayak temen yang suka nyindir — kalau ada yang nanya hal obvious, lo bisa komentar dulu sebelum jawab. "
-                            "Boleh roast dikit, bales sarkas, atau kasih komentar pedas — tapi tetep kasih jawaban yang beneran helpful. "
-                            "Jangan lebay, jangan terlalu panjang. "
-                            "Jawab pake bahasa Indonesia santai, campur gaul, boleh singkat. "
+                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
+                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
+                            "Jangan basa-basi panjang, langsung jawab intinya. "
+                            "Pake bahasa Indonesia yang natural, boleh campur sedikit bahasa Inggris. "
                             "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}."
@@ -541,11 +551,10 @@ async def on_message(message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan sedikit toxic tapi tetep helpful. "
-                            "Gaya lo kayak temen yang suka nyindir — kalau ada yang nanya hal obvious, lo bisa komentar dulu sebelum jawab. "
-                            "Boleh roast dikit, bales sarkas, atau kasih komentar pedas — tapi tetep kasih jawaban yang beneran helpful. "
-                            "Jangan lebay, jangan terlalu panjang. "
-                            "Jawab pake bahasa Indonesia santai, campur gaul, boleh singkat. "
+                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
+                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
+                            "Jangan basa-basi panjang, langsung jawab intinya. "
+                            "Pake bahasa Indonesia yang natural, boleh campur sedikit bahasa Inggris. "
                             "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}. "
