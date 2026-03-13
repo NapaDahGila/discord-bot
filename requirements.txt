@@ -1,6 +1,7 @@
-psycopg2-binary
 discord.py
 groq
-aiohttp
-Pillow
 pytz
+aiohttp
+libsql-client
+libsql-experimental
+Pillow
