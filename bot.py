@@ -638,6 +638,7 @@ async def on_message(message):
     profile = get_profile(user_id)
     nickname = profile["nickname"] or message.author.display_name
     prefs = profile["preferences"]
+    print(f"[PROFILE] user_id={user_id} nickname={profile['nickname']} -> pakai={nickname}")
     profile_info = f"Nama panggilan user: {nickname}. "
     if prefs:
         profile_info += "Preferensi user: " + ", ".join([f"{k}={v}" for k, v in prefs.items()]) + ". "
