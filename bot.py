@@ -483,7 +483,7 @@ async def chat(ctx, *, message):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {
                         "role": "system",
@@ -566,7 +566,7 @@ async def on_message(message):
     async with message.channel.typing():
         try:
             response = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {
                         "role": "system",
@@ -652,7 +652,7 @@ async def debug(ctx, *, question: str = None):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {
                         "role": "system",
@@ -704,7 +704,7 @@ async def roast(ctx):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {
                         "role": "system",
@@ -762,7 +762,7 @@ async def review(ctx, *, question: str = None):
     async with ctx.typing():
         try:
             response = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {
                         "role": "system",
