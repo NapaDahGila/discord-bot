@@ -56,49 +56,51 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS memory (
+    tables = [
+        """CREATE TABLE IF NOT EXISTS memory (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id   TEXT NOT NULL,
             role      TEXT NOT NULL,
             content   TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS prefixes (
+        )""",
+        """CREATE TABLE IF NOT EXISTS prefixes (
             guild_id  TEXT PRIMARY KEY,
             prefix    TEXT NOT NULL DEFAULT '!'
-        );
-        CREATE TABLE IF NOT EXISTS wack_scores (
+        )""",
+        """CREATE TABLE IF NOT EXISTS wack_scores (
             user_id   TEXT PRIMARY KEY,
             username  TEXT NOT NULL,
             best      INTEGER DEFAULT 0,
             total     INTEGER DEFAULT 0,
             games     INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS reminders (
+        )""",
+        """CREATE TABLE IF NOT EXISTS reminders (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id     TEXT NOT NULL,
             channel_id  TEXT NOT NULL,
             pesan       TEXT NOT NULL,
             waktu       REAL NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS todos (
+        )""",
+        """CREATE TABLE IF NOT EXISTS todos (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id   TEXT NOT NULL,
             tugas     TEXT NOT NULL,
             selesai   INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS notes (
+        )""",
+        """CREATE TABLE IF NOT EXISTS notes (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id   TEXT NOT NULL,
             judul     TEXT NOT NULL,
             isi       TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS user_profiles (
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_profiles (
             user_id     TEXT PRIMARY KEY,
             nickname    TEXT,
             preferences TEXT DEFAULT '{}'
-        );
-    """)
+        )""",
+    ]
+    for sql in tables:
+        conn.execute(sql)
     conn.sync()
 
 def load_memory(user_id: str, limit: int = 15) -> list:
@@ -658,7 +660,8 @@ async def on_message(message):
                             "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
                             "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
                             "Jangan sebut OpenAI atau model apapun. "
-                            f"{profile_info}"
+                            f"DATA USER (selalu gunakan ini, jangan abaikan): {profile_info}"
+                            "WAJIB: Panggil user sesuai nama panggilan di DATA USER di atas, bukan username Discord. "
                             f"Waktu WIB: {sekarang}. "
                             "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
                             '{"intent":"...","data":"...","reply":"..."} '
@@ -675,7 +678,7 @@ async def on_message(message):
                             "user: liat catatan 1 -> {\"intent\":\"note_get\",\"data\":\"1\",\"reply\":\"Nih isinya!\"} "
                             "user: hapus catatan 3 -> {\"intent\":\"note_delete\",\"data\":\"3\",\"reply\":\"Oke dihapus!\"} "
                             "user: cuaca jakarta -> {\"intent\":\"cuaca\",\"data\":\"jakarta\",\"reply\":\"Gw cek dulu!\"} "
-                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} ""user: panggil gw Ren -> {\"intent\":\"profile_update\",\"data\":\"nickname:Ren\",\"reply\":\"Sip, gw panggil lo Ren!\"} ""user: gw suka musik jazz -> {\"intent\":\"profile_update\",\"data\":\"musik:jazz\",\"reply\":\"Noted, lo suka jazz!\"} "
+                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} ""user: panggil gw Ren -> {\"intent\":\"profile_update\",\"data\":\"nickname:Ren\",\"reply\":\"Sip, gw panggil lo Ren!\"} ""user: gw suka musik jazz -> {\"intent\":\"profile_update\",\"data\":\"musik:jazz\",\"reply\":\"Noted, lo suka jazz!\"} ""PENTING: profile_update HANYA boleh dipanggil kalau user EKSPLISIT minta ubah nama panggilan atau kasih tau preferensi. ""Jangan pernah profile_update hanya karena user menyapa atau menyebut nama mereka sendiri. "
                             "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
                         )
                     }
