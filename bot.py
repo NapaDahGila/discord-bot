@@ -37,30 +37,41 @@ def get_db():
     global _db_conn
     try:
         if _db_conn is None:
+            print(f"[DB] Connecting to Turso: {TURSO_URL}")
             _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
             _db_conn.sync()
+            print("[DB] Connected & synced OK")
         else:
             _db_conn.execute("SELECT 1")
         return _db_conn
     except Exception as e:
         print(f"[DB] Reconnecting... ({e})")
         try:
-            import os
             if os.path.exists("memory.db"):
                 os.remove("memory.db")
         except:
             pass
+        print(f"[DB] Re-connecting to Turso: {TURSO_URL}")
         _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
         _db_conn.sync()
+        print("[DB] Reconnected & synced OK")
         return _db_conn
+
+def sync_db(conn, label=""):
+    try:
+        conn.sync()
+        print(f"[DB] sync OK {label}")
+    except Exception as e:
+        print(f"[DB] sync FAILED {label}: {e}")
 
 def init_db():
     conn = get_db()
-    # Sync dulu untuk pull data terbaru dari Turso sebelum buat tabel
     try:
         conn.sync()
-    except Exception:
-        pass
+        print("[DB] init: pulled latest from Turso")
+    except Exception as e:
+        print(f"[DB] init sync pull failed: {e}")
+
     tables = [
         """CREATE TABLE IF NOT EXISTS memory (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,9 +117,11 @@ def init_db():
     ]
     for sql in tables:
         conn.execute(sql)
-    # Sync dua kali: push tabel baru ke Turso, lalu pull data yang ada
-    conn.sync()
-    conn.sync()
+        print(f"[DB] table created/verified: {sql.split('EXISTS')[1].split('(')[0].strip()}")
+
+    sync_db(conn, "init push tables")
+    sync_db(conn, "init pull after push")
+    print("[DB] init_db complete")
 
 def load_memory(user_id: str, limit: int = 15) -> list:
     conn = get_db()
@@ -130,12 +143,12 @@ def save_message(user_id: str, role: str, content: str):
             SELECT id FROM memory WHERE user_id = ? ORDER BY id DESC LIMIT 15
         )
     """, (user_id, user_id))
-    conn.sync()
+    sync_db(conn, f"save_message user={user_id} role={role}")
 
 def reset_memory(user_id: str):
     conn = get_db()
     conn.execute("DELETE FROM memory WHERE user_id = ?", (user_id,))
-    conn.sync()
+    sync_db(conn, f"reset_memory user={user_id}")
 
 def get_profile(user_id: str) -> dict:
     conn = get_db()
@@ -159,7 +172,7 @@ def save_profile(user_id: str, nickname: str = None, preferences: dict = None):
         "INSERT INTO user_profiles (user_id, nickname, preferences) VALUES (?, ?, ?)",
         (user_id, new_nickname, json.dumps(new_prefs))
     )
-    conn.sync()
+    sync_db(conn, f"save_profile user={user_id} nickname={new_nickname}")
     print(f"[PROFILE] saved user_id={user_id} nickname={new_nickname}")
 
 def save_wack_score(user_id: str, username: str, skor: int, total: int):
@@ -173,7 +186,7 @@ def save_wack_score(user_id: str, username: str, skor: int, total: int):
             total = total + ?,
             games = games + 1
     """, (user_id, username, skor, skor, username, skor, skor))
-    conn.sync()
+    sync_db(conn, f"save_wack_score user={user_id} skor={skor}")
 
 def get_leaderboard():
     conn = get_db()
@@ -192,14 +205,15 @@ async def cek_reminder():
                 if channel:
                     await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
                 conn.execute("DELETE FROM reminders WHERE id = ?", (id,))
-            conn.sync()
+            if rows:
+                sync_db(conn, "cek_reminder delete done")
         except Exception as e:
             print(f"[REMINDER] Error: {e}, retrying in 5s...")
             global _db_conn
-            _db_conn = None  # force reconnect next time
+            _db_conn = None
             await asyncio.sleep(5)
             try:
-                init_db()  # pastiin tabel ada setelah reconnect
+                init_db()
             except Exception as e2:
                 print(f"[REMINDER] init_db failed: {e2}")
         await asyncio.sleep(1)
@@ -226,7 +240,7 @@ def set_prefix(guild_id: str, prefix: str):
         INSERT INTO prefixes (guild_id, prefix) VALUES (?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
-    conn.sync()
+    sync_db(conn, f"set_prefix guild={guild_id} prefix={prefix}")
     _prefix_cache[guild_id] = prefix
     print(f"[PREFIX] guild {guild_id} → {prefix}")
 
@@ -242,7 +256,6 @@ def is_wake_call(text):
     return any(k in text for k in keywords)
 
 def strip_thinking(text: str) -> str:
-    """Hapus <think>...</think> dari response DeepSeek R1"""
     import re
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     return text.strip()
@@ -257,12 +270,10 @@ async def process_intent(message, reply_text, user_id):
             if inner.startswith("json"):
                 inner = inner[4:]
             clean = inner.strip()
-        # Coba parse JSON, dengan beberapa fallback
         data = None
         try:
             data = json.loads(clean)
         except Exception:
-            # Coba cari JSON object yang ada "intent" di dalamnya
             m = re.search(r'\{[^{}]*"intent"[^{}]*\}', clean, re.DOTALL)
             if m:
                 try:
@@ -282,7 +293,7 @@ async def process_intent(message, reply_text, user_id):
             try:
                 conn = get_db()
                 conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, value))
-                conn.sync()
+                sync_db(conn, f"todo_add user={user_id}")
                 print(f"[INTENT] todo_add OK: {value}")
             except Exception as db_err:
                 print(f"[INTENT] todo_add ERROR: {db_err}")
@@ -306,7 +317,7 @@ async def process_intent(message, reply_text, user_id):
             try:
                 conn = get_db()
                 conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (value, user_id))
-                conn.sync()
+                sync_db(conn, f"todo_done id={value}")
                 print(f"[INTENT] todo_done OK: id={value}")
             except Exception as db_err:
                 print(f"[INTENT] todo_done ERROR: {db_err}")
@@ -319,7 +330,7 @@ async def process_intent(message, reply_text, user_id):
                     conn = get_db()
                     conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
                         (user_id, parts[0].strip(), parts[1].strip()))
-                    conn.sync()
+                    sync_db(conn, f"note_add user={user_id}")
                     print(f"[INTENT] note_add OK")
                 except Exception as db_err:
                     print(f"[INTENT] note_add ERROR: {db_err}")
@@ -336,7 +347,7 @@ async def process_intent(message, reply_text, user_id):
                     conn = get_db()
                     conn.execute("INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
                         (user_id, str(message.channel.id), pesan, time.time() + detik))
-                    conn.sync()
+                    sync_db(conn, f"remind_add user={user_id}")
                     print(f"[INTENT] remind_add OK: {waktu_str} - {pesan}")
                 except Exception as db_err:
                     print(f"[INTENT] remind_add ERROR: {db_err}")
@@ -346,7 +357,7 @@ async def process_intent(message, reply_text, user_id):
             try:
                 conn = get_db()
                 conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (value, user_id))
-                conn.sync()
+                sync_db(conn, f"todo_delete id={value}")
                 print(f"[INTENT] todo_delete OK: id={value}")
             except Exception as db_err:
                 print(f"[INTENT] todo_delete ERROR: {db_err}")
@@ -382,7 +393,7 @@ async def process_intent(message, reply_text, user_id):
             try:
                 conn = get_db()
                 conn.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (value, user_id))
-                conn.sync()
+                sync_db(conn, f"note_delete id={value}")
                 print(f"[INTENT] note_delete OK: id={value}")
             except Exception as db_err:
                 print(f"[INTENT] note_delete ERROR: {db_err}")
@@ -498,20 +509,17 @@ async def process_intent(message, reply_text, user_id):
                 reply = "Gagal translate 😅"
 
         if reply:
-            # Kirim pake embed biar lebih rapi
             embed = discord.Embed(description=reply, color=0x5865F2)
             embed.set_footer(text=f"Enki • {datetime.now(pytz.timezone('Asia/Jakarta')).strftime('%H:%M')}")
             await message.channel.send(embed=embed)
 
     except Exception as e:
         print(f"[INTENT] OUTER ERROR: {e} | raw: {repr(reply_text[:100])}")
-        # Jangan kirim raw JSON ke user, coba extract reply dulu
         import re
         m = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', reply_text)
         if m:
             await message.channel.send(m.group(1))
         else:
-            # Kalau beneran ga bisa parse, kirim pesan generic
             await message.channel.send("Hmm, gw lagi error dikit 😅 Coba lagi?")
 # ==========================
 
@@ -519,7 +527,7 @@ async def process_intent(message, reply_text, user_id):
 async def on_ready():
     print(f"Bot online sebagai {bot.user}")
     try:
-        init_db()  # pastiin tabel ada setiap bot ready
+        init_db()
     except Exception as e:
         print(f"[READY] init_db error: {e}")
     asyncio.ensure_future(cek_reminder())
@@ -585,13 +593,11 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Cek AFK mentions
     if message.mentions:
         for user in message.mentions:
             if user.id in afk_users:
                 await message.channel.send(f"⚠️ {user.display_name} lagi AFK: `{afk_users[user.id]}`")
 
-    # Welcome back dari AFK
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         embed = discord.Embed(
@@ -604,7 +610,6 @@ async def on_message(message):
 
     text = message.content.lower()
 
-    # Early returns — SEBELUM save ke memory
     if is_creator_question(text):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
         return
@@ -633,12 +638,10 @@ async def on_message(message):
     if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
-    # Baru di sini load history, simpan pesan user, lalu proses AI
     user_id = str(message.author.id)
     history = load_memory(user_id)
-    save_message(user_id, "user", message.content)  # simpan teks biasa, bukan JSON
+    save_message(user_id, "user", message.content)
 
-    # Load user profile
     profile = get_profile(user_id)
     nickname = profile["nickname"] or message.author.display_name
     prefs = profile["preferences"]
@@ -675,7 +678,8 @@ async def on_message(message):
                             "note_add(data=judul|isi), note_list(data=), note_get(data=id), note_delete(data=id), "
                             "remind_add(data=10m|pesan), "
                             "cuaca(data=nama_kota), forecast(data=nama_kota), "
-                            "news(data=topik_opsional), translate(data=en|teks), ""profile_update(data=nickname:nama|key:value), chat(data=) "
+                            "news(data=topik_opsional), translate(data=en|teks), "
+                            "profile_update(data=nickname:nama|key:value), chat(data=) "
                             "Contoh-contoh: "
                             "user: tambahin todo belajar python -> {\"intent\":\"todo_add\",\"data\":\"belajar python\",\"reply\":\"Sip, gw tambahin!\"} "
                             "user: hapus todo 2 -> {\"intent\":\"todo_delete\",\"data\":\"2\",\"reply\":\"Oke dihapus!\"} "
@@ -683,7 +687,11 @@ async def on_message(message):
                             "user: liat catatan 1 -> {\"intent\":\"note_get\",\"data\":\"1\",\"reply\":\"Nih isinya!\"} "
                             "user: hapus catatan 3 -> {\"intent\":\"note_delete\",\"data\":\"3\",\"reply\":\"Oke dihapus!\"} "
                             "user: cuaca jakarta -> {\"intent\":\"cuaca\",\"data\":\"jakarta\",\"reply\":\"Gw cek dulu!\"} "
-                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} ""user: panggil gw Ren -> {\"intent\":\"profile_update\",\"data\":\"nickname:Ren\",\"reply\":\"Sip, gw panggil lo Ren!\"} ""user: gw suka musik jazz -> {\"intent\":\"profile_update\",\"data\":\"musik:jazz\",\"reply\":\"Noted, lo suka jazz!\"} ""PENTING: profile_update HANYA boleh dipanggil kalau user EKSPLISIT minta ubah nama panggilan atau kasih tau preferensi. ""Jangan pernah profile_update hanya karena user menyapa atau menyebut nama mereka sendiri. "
+                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} "
+                            "user: panggil gw Ren -> {\"intent\":\"profile_update\",\"data\":\"nickname:Ren\",\"reply\":\"Sip, gw panggil lo Ren!\"} "
+                            "user: gw suka musik jazz -> {\"intent\":\"profile_update\",\"data\":\"musik:jazz\",\"reply\":\"Noted, lo suka jazz!\"} "
+                            "PENTING: profile_update HANYA boleh dipanggil kalau user EKSPLISIT minta ubah nama panggilan atau kasih tau preferensi. "
+                            "Jangan pernah profile_update hanya karena user menyapa atau menyebut nama mereka sendiri. "
                             "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
                         )
                     }
@@ -692,7 +700,6 @@ async def on_message(message):
 
             raw = strip_thinking(response.choices[0].message.content or "")
 
-            # Parse reply bersih untuk disimpan ke memory (bukan raw JSON)
             try:
                 clean = raw.strip()
                 if "```" in clean:
@@ -705,7 +712,7 @@ async def on_message(message):
             except Exception:
                 reply_to_save = raw
 
-            save_message(user_id, "assistant", reply_to_save)  # simpan reply bersih, bukan JSON
+            save_message(user_id, "assistant", reply_to_save)
             await process_intent(message, raw, user_id)
 
         except Exception as e:
@@ -1115,7 +1122,7 @@ async def remind(ctx, waktu: str, *, pesan: str):
         "INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
         (str(ctx.author.id), str(ctx.channel.id), pesan, waktu_remind)
     )
-    conn.sync()
+    sync_db(conn, f"remind user={ctx.author.id}")
 
     embed = discord.Embed(
         title="⏰ Reminder Set!",
@@ -1135,7 +1142,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             await ctx.send("Tugas nya apa? `!todo add belajar python`")
             return
         conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, tugas))
-        conn.sync()
+        sync_db(conn, f"todo add user={user_id}")
         embed = discord.Embed(description=f"✅ Ditambahin: **{tugas}**", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1155,7 +1162,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             await ctx.send("Masukkin ID tugasnya! `!todo done 1`")
             return
         conn.execute("UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (tugas, user_id))
-        conn.sync()
+        sync_db(conn, f"todo done id={tugas}")
         embed = discord.Embed(description=f"✅ Tugas #{tugas} selesai!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1164,7 +1171,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             await ctx.send("Masukkin ID tugasnya! `!todo delete 1`")
             return
         conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (tugas, user_id))
-        conn.sync()
+        sync_db(conn, f"todo delete id={tugas}")
         embed = discord.Embed(description=f"🗑️ Tugas #{tugas} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1185,7 +1192,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
             return
         judul, isi = konten.split("|", 1)
         conn.execute("INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)", (user_id, judul.strip(), isi.strip()))
-        conn.sync()
+        sync_db(conn, f"note add user={user_id}")
         embed = discord.Embed(description=f"📝 Catatan **{judul.strip()}** disimpan!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1216,7 +1223,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
             await ctx.send("Masukkin ID catatan! `!note delete 1`")
             return
         conn.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
-        conn.sync()
+        sync_db(conn, f"note delete id={konten}")
         embed = discord.Embed(description=f"🗑️ Catatan #{konten} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
