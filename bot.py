@@ -605,9 +605,7 @@ async def on_message(message):
 
     if is_wake_call(text):
         active_channels[message.channel.id] = message.author.id
-        profile_wake = get_profile(str(message.author.id))
-        nama_wake = profile_wake["nickname"] or message.author.display_name
-        await message.channel.send(f"Hai {nama_wake}! Ada yang bisa gw bantu? 👋")
+        await message.channel.send("Halo! Ada yang bisa gw bantu? 👋")
         return
 
     if "stop enki" in text or "enki stop" in text:
