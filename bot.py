@@ -277,6 +277,52 @@ async def process_intent(message, reply_text, user_id):
                     print(f"[INTENT] remind_add ERROR: {db_err}")
                     reply = "Gagal set reminder 😅"
 
+        elif intent == "todo_delete":
+            try:
+                conn = get_db()
+                conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (value, user_id))
+                conn.sync()
+                print(f"[INTENT] todo_delete OK: id={value}")
+            except Exception as db_err:
+                print(f"[INTENT] todo_delete ERROR: {db_err}")
+                reply = "Gagal hapus todo 😅"
+
+        elif intent == "note_list":
+            try:
+                conn = get_db()
+                rows = conn.execute("SELECT id, judul FROM notes WHERE user_id = ?", (user_id,)).fetchall()
+                if rows:
+                    items = "\n".join([f"📝 #{i} {j}" for i, j in rows])
+                    reply = "📒 Catatan lo:\n" + items
+                else:
+                    reply = "Belum ada catatan 😴"
+            except Exception as db_err:
+                print(f"[INTENT] note_list ERROR: {db_err}")
+                reply = "Gagal baca catatan 😅"
+
+        elif intent == "note_get":
+            try:
+                conn = get_db()
+                row = conn.execute("SELECT judul, isi FROM notes WHERE id = ? AND user_id = ?", (value, user_id)).fetchone()
+                if row:
+                    judul, isi = row
+                    reply = f"📝 **{judul}**\n{isi}"
+                else:
+                    reply = "Catatan ga ketemu 😅"
+            except Exception as db_err:
+                print(f"[INTENT] note_get ERROR: {db_err}")
+                reply = "Gagal baca catatan 😅"
+
+        elif intent == "note_delete":
+            try:
+                conn = get_db()
+                conn.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (value, user_id))
+                conn.sync()
+                print(f"[INTENT] note_delete OK: id={value}")
+            except Exception as db_err:
+                print(f"[INTENT] note_delete ERROR: {db_err}")
+                reply = "Gagal hapus catatan 😅"
+
         elif intent == "cuaca":
             try:
                 async with aiohttp.ClientSession() as session:
@@ -412,7 +458,10 @@ async def chat(ctx, *, message):
                         "content": (
                             "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
                             "Ngobrol kayak temen deket, ga kaku, ga formal. "
-                            "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
+                            "Gaya lo kayak temen yang suka nyindir — kalau ada yang nanya hal obvious, lo bisa komentar dulu sebelum jawab. "
+                            "Boleh roast dikit, bales sarkas, atau kasih komentar pedas — tapi tetep kasih jawaban yang beneran helpful. "
+                            "Jangan lebay, jangan terlalu panjang. "
+                            "Jawab pake bahasa Indonesia santai, campur gaul, boleh singkat. "
                             "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}."
@@ -492,28 +541,31 @@ async def on_message(message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan natural. "
-                            "Ngobrol kayak temen deket, ga kaku, ga formal. "
-                            "Jawab pake bahasa Indonesia yang santai, boleh campur bahasa gaul. "
+                            "Lo adalah Enki, AI asisten yang santai, sarkas, dan sedikit toxic tapi tetep helpful. "
+                            "Gaya lo kayak temen yang suka nyindir — kalau ada yang nanya hal obvious, lo bisa komentar dulu sebelum jawab. "
+                            "Boleh roast dikit, bales sarkas, atau kasih komentar pedas — tapi tetep kasih jawaban yang beneran helpful. "
+                            "Jangan lebay, jangan terlalu panjang. "
+                            "Jawab pake bahasa Indonesia santai, campur gaul, boleh singkat. "
                             "Kalau ditanya siapa yang bikin lo: Gw dibuat sama Ren Lumireign. "
                             "Jangan sebut OpenAI atau model apapun. "
                             f"Waktu WIB: {sekarang}. "
                             "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
                             '{"intent":"...","data":"...","reply":"..."} '
-                            "Intent tersedia: todo_add(data=tugas), todo_list(data=), todo_done(data=id), "
-                            "note_add(data=judul|isi), remind_add(data=10m|pesan), "
+                            "Intent tersedia: "
+                            "todo_add(data=tugas), todo_list(data=), todo_done(data=id), todo_delete(data=id), "
+                            "note_add(data=judul|isi), note_list(data=), note_get(data=id), note_delete(data=id), "
+                            "remind_add(data=10m|pesan), "
                             "cuaca(data=nama_kota), forecast(data=nama_kota), "
-                            "news(data=topik_opsional), translate(data=en|teks yang mau ditranslate), chat(data=) "
-                            "Contoh cuaca: user: cuaca jakarta "
-                            '-> {"intent":"cuaca","data":"jakarta","reply":"Oke gw cek cuacanya!"} '
-                            "Contoh news: user: berita terbaru tentang teknologi "
-                            '-> {"intent":"news","data":"teknologi","reply":"Oke gw cariin!"} '
-                            "Contoh translate: user: translate ke inggris halo dunia "
-                            '-> {"intent":"translate","data":"en|halo dunia","reply":"Oke gw translatein!"} '
-                            "Contoh todo_add: user: tambahin todo belajar python "
-                            '-> {"intent":"todo_add","data":"belajar python","reply":"Oke ditambahin!"} '
-                            "Contoh chat: user: halo "
-                            '-> {"intent":"chat","data":"","reply":"Halo!"}'
+                            "news(data=topik_opsional), translate(data=en|teks), chat(data=) "
+                            "Contoh-contoh: "
+                            "user: tambahin todo belajar python -> {\"intent\":\"todo_add\",\"data\":\"belajar python\",\"reply\":\"Sip, gw tambahin!\"} "
+                            "user: hapus todo 2 -> {\"intent\":\"todo_delete\",\"data\":\"2\",\"reply\":\"Oke dihapus!\"} "
+                            "user: tampilin semua catatan -> {\"intent\":\"note_list\",\"data\":\"\",\"reply\":\"Nih catatan lo!\"} "
+                            "user: liat catatan 1 -> {\"intent\":\"note_get\",\"data\":\"1\",\"reply\":\"Nih isinya!\"} "
+                            "user: hapus catatan 3 -> {\"intent\":\"note_delete\",\"data\":\"3\",\"reply\":\"Oke dihapus!\"} "
+                            "user: cuaca jakarta -> {\"intent\":\"cuaca\",\"data\":\"jakarta\",\"reply\":\"Gw cek dulu!\"} "
+                            "user: halo -> {\"intent\":\"chat\",\"data\":\"\",\"reply\":\"Halo bro!\"} "
+                            "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
                         )
                     }
                 ] + history + [{"role": "user", "content": message.content}]
