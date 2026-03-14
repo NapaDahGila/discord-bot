@@ -444,26 +444,54 @@ def is_creator_question(text):
 
 # ===== INTENT PROCESSOR =====
 
+def parse_intent_json(raw: str) -> dict | None:
+    """
+    Coba parse JSON dari response AI dengan beberapa fallback.
+    Return dict kalau berhasil, None kalau gagal.
+    """
+    import re
+
+    # Bersihkan markdown code block
+    clean = raw.strip()
+    if "```" in clean:
+        parts = clean.split("```")
+        for part in parts:
+            if part.startswith("json"):
+                part = part[4:]
+            part = part.strip()
+            if part.startswith("{"):
+                clean = part
+                break
+
+    # Coba 1: langsung parse
+    try:
+        return json.loads(clean)
+    except Exception:
+        pass
+
+    # Coba 2: cari JSON object pertama yang ada "intent"
+    m = re.search(r'\{.*?"intent".*?\}', clean, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except Exception:
+            pass
+
+    # Coba 3: cari JSON object apapun
+    m = re.search(r'\{.*?\}', clean, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except Exception:
+            pass
+
+    return None
+
+
 async def process_intent(message, reply_text, user_id):
     import re
     try:
-        clean = reply_text.strip()
-        if "```" in clean:
-            inner = clean.split("```")[1]
-            if inner.startswith("json"):
-                inner = inner[4:]
-            clean = inner.strip()
-
-        data = None
-        try:
-            data = json.loads(clean)
-        except Exception:
-            m = re.search(r'\{[^{}]*"intent"[^{}]*\}', clean, re.DOTALL)
-            if m:
-                try:
-                    data = json.loads(m.group())
-                except Exception:
-                    pass
+        data = parse_intent_json(reply_text)
         if data is None:
             raise ValueError("no json found")
 
@@ -830,38 +858,53 @@ async def on_message(message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
-                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
-                            "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
-                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
-                            "Jangan sebut OpenAI atau model apapun. "
-                            f"DATA USER (selalu gunakan ini, jangan abaikan): {profile_info}"
-                            "WAJIB: Panggil user sesuai nama panggilan di DATA USER di atas, bukan username Discord. "
-                            f"Waktu WIB: {sekarang}. "
-                            "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
-                            '{"intent":"...","data":"...","reply":"..."} '
-                            "Intent tersedia: "
-                            "todo_add(data=tugas), todo_list(data=), todo_done(data=id), todo_delete(data=id), "
-                            "note_add(data=judul|isi), note_list(data=), note_get(data=id), note_delete(data=id), "
-                            "remind_add(data=10m|pesan), "
-                            "cuaca(data=nama_kota), forecast(data=nama_kota), "
-                            "news(data=topik_opsional), translate(data=en|teks), "
-                            "profile_update(data=nickname:nama|key:value), chat(data=) "
-                            "Contoh-contoh: "
-                            'user: tambahin todo belajar python -> {"intent":"todo_add","data":"belajar python","reply":"Sip, gw tambahin!"} '
-                            'user: hapus todo 2 -> {"intent":"todo_delete","data":"2","reply":"Oke dihapus!"} '
-                            'user: tampilin semua catatan -> {"intent":"note_list","data":"","reply":"Nih catatan lo!"} '
-                            'user: liat catatan 1 -> {"intent":"note_get","data":"1","reply":"Nih isinya!"} '
-                            'user: hapus catatan 3 -> {"intent":"note_delete","data":"3","reply":"Oke dihapus!"} '
-                            'user: cuaca jakarta -> {"intent":"cuaca","data":"jakarta","reply":"Gw cek dulu!"} '
-                            'user: halo -> {"intent":"chat","data":"","reply":"Halo bro!"} '
-                            'user: panggil gw Ren -> {"intent":"profile_update","data":"nickname:Ren","reply":"Sip, gw panggil lo Ren!"} '
-                            'user: gw suka musik jazz -> {"intent":"profile_update","data":"musik:jazz","reply":"Noted, lo suka jazz!"} '
-                            "PENTING: profile_update HANYA boleh dipanggil kalau user EKSPLISIT minta ubah nama panggilan atau kasih tau preferensi. "
-                            "Jangan pernah profile_update hanya karena user menyapa atau menyebut nama mereka sendiri. "
-                            "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
+                            "Lo adalah Enki — asisten pribadi yang cerdas, cepat, dan punya kepribadian. "
+                            "Gaya lo kayak Jarvis-nya Tony Stark: efisien, sedikit sarkastik kalau situasinya pas, tapi tetap helpful. "
+                            "Lo ngobrol kayak temen deket — santai, gaul, pakai bahasa sehari-hari, BUKAN kayak chatbot korporat. "
+                            "Jawaban lo singkat dan to the point. Kalau ga perlu panjang, jangan dipanjangin. "
+                            "\n\n"
+                            "BAHASA: Selalu deteksi bahasa user dan balas dengan bahasa yang SAMA. "
+                            "Indonesia → Indonesia, English → English, campur → campur juga. "
+                            "\n\n"
+                            f"IDENTITAS USER:\n{profile_info}"
+                            "WAJIB panggil user dengan nama panggilan di atas — JANGAN pakai username Discord. "
+                            "Kalau nama panggilan belum diset, panggil 'bro' atau nama Discord-nya. "
+                            "\n\n"
+                            f"Waktu sekarang (WIB): {sekarang}\n\n"
+                            "TENTANG LO: Kalau ditanya siapa yang bikin lo, jawab 'Ren Lumireign'. "
+                            "Jangan pernah sebut OpenAI, Groq, Meta, atau model AI apapun. "
+                            "\n\n"
+                            "FORMAT JAWABAN — WAJIB selalu balas dengan JSON ini SAJA, tanpa teks di luar JSON:\n"
+                            '{"intent":"...","data":"...","reply":"..."}\n\n'
+                            "DAFTAR INTENT:\n"
+                            "- chat → obrolan biasa, pertanyaan umum, diskusi\n"
+                            "- todo_add → data=teks tugas\n"
+                            "- todo_list → data=''\n"
+                            "- todo_done → data=id angka\n"
+                            "- todo_delete → data=id angka\n"
+                            "- note_add → data=judul|isi\n"
+                            "- note_list → data=''\n"
+                            "- note_get → data=id angka\n"
+                            "- note_delete → data=id angka\n"
+                            "- remind_add → data=10m|pesan (s=detik, m=menit, h=jam)\n"
+                            "- cuaca → data=nama kota\n"
+                            "- forecast → data=nama kota\n"
+                            "- news → data=topik (boleh kosong)\n"
+                            "- translate → data=kode_bahasa|teks\n"
+                            "- profile_update → data=nickname:nama ATAU key:value\n"
+                            "\n"
+                            "ATURAN INTENT:\n"
+                            "1. Default ke 'chat' kalau ga ada intent yang cocok — JANGAN paksain intent lain\n"
+                            "2. profile_update HANYA kalau user EKSPLISIT minta ganti nama panggilan atau kasih tau preferensi\n"
+                            "3. Kalau user cuma nyebut namanya sendiri atau sapa, itu tetap 'chat'\n"
+                            "4. Field 'reply' WAJIB selalu diisi dengan respons natural ke user\n"
+                            "\n"
+                            "CONTOH:\n"
+                            'user: halo → {"intent":"chat","data":"","reply":"Yo! Ada yang bisa gw bantu?"}\n'
+                            'user: tambahin todo beli susu → {"intent":"todo_add","data":"beli susu","reply":"Sip, gw catat!"}\n'
+                            'user: ingetin gw meeting 30 menit lagi → {"intent":"remind_add","data":"30m|meeting","reply":"Oke, gw ingetin 30 menit lagi!"}\n'
+                            'user: panggil gw Ren → {"intent":"profile_update","data":"nickname:Ren","reply":"Sip, sekarang gw panggil lo Ren!"}\n'
+                            'user: nama gw Budi → {"intent":"chat","data":"","reply":"Oh oke Budi, ada yang bisa gw bantu?"}\n'
                         )
                     }
                 ] + history + [{"role": "user", "content": message.content}]
@@ -869,17 +912,8 @@ async def on_message(message):
 
             raw = strip_thinking(response.choices[0].message.content or "")
 
-            try:
-                clean = raw.strip()
-                if "```" in clean:
-                    inner = clean.split("```")[1]
-                    if inner.startswith("json"):
-                        inner = inner[4:]
-                    clean = inner.strip()
-                parsed = json.loads(clean)
-                reply_to_save = parsed.get("reply", raw)
-            except Exception:
-                reply_to_save = raw
+            parsed = parse_intent_json(raw)
+            reply_to_save = parsed.get("reply", raw) if parsed else raw
 
             save_message(user_id, "assistant", reply_to_save)
             await process_intent(message, raw, user_id)
@@ -906,6 +940,13 @@ async def chat(ctx, *, message):
     history = load_memory(user_id)
     save_message(user_id, "user", message)
 
+    profile = get_profile(user_id)
+    nickname = profile["nickname"] or ctx.author.display_name
+    prefs = profile["preferences"]
+    profile_info = f"Nama panggilan user: {nickname}. "
+    if prefs:
+        profile_info += "Preferensi: " + ", ".join([f"{k}={v}" for k, v in prefs.items()]) + ". "
+
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
@@ -917,14 +958,15 @@ async def chat(ctx, *, message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
-                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
-                            "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
-                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
-                            "Jangan sebut OpenAI atau model apapun. "
-                            f"Waktu WIB: {sekarang}."
+                            "Lo adalah Enki — asisten pribadi yang cerdas, cepat, dan punya kepribadian. "
+                            "Gaya lo kayak Jarvis-nya Tony Stark: efisien, sedikit sarkastik kalau situasinya pas, tapi tetap helpful. "
+                            "Lo ngobrol kayak temen deket — santai, gaul, pakai bahasa sehari-hari. "
+                            "Jawaban singkat dan to the point. Kalau ga perlu panjang, jangan dipanjangin. "
+                            "Selalu deteksi bahasa user dan balas dengan bahasa yang SAMA. "
+                            f"USER: {profile_info}"
+                            f"Waktu WIB: {sekarang}. "
+                            "Kalau ditanya siapa yang bikin lo: jawab 'Ren Lumireign'. "
+                            "Jangan sebut OpenAI, Groq, Meta, atau model AI apapun."
                         )
                     }
                 ] + history + [{"role": "user", "content": message}]
