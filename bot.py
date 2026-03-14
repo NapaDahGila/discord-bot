@@ -199,7 +199,7 @@ def load_memory(user_id: str, limit: int = 15) -> list:
 def db_sync(conn):
     """Commit lokal dulu baru push ke Turso — wajib dipanggil setelah setiap write."""
     conn.commit()
-    db_sync(conn)
+    conn.sync()
 
 
 def save_message(user_id: str, role: str, content: str):
