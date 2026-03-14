@@ -437,6 +437,7 @@ async def periodic_sync():
 init_db()
 afk_users = {}
 active_channels = {}
+_ai_cooldown = {}  # cooldown per user buat hit AI
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
@@ -825,10 +826,21 @@ async def on_message(message):
     user_id = str(message.author.id)
     text = message.content.lower()
 
+    # ===== COOLDOWN (3 detik per user, khusus pesan yang hit AI) =====
+    now = time.time()
+    last = _ai_cooldown.get(user_id, 0)
+    current_prefix = get_prefix(bot, message)
+    is_command = message.content.startswith(current_prefix)
+    # Cooldown hanya berlaku untuk non-command (chat biasa & study session)
+    if not is_command and (now - last) < 3:
+        return
+    if not is_command:
+        _ai_cooldown[user_id] = now
+    # ===== END COOLDOWN =====
+
     # ===== STUDY SESSION HANDLER =====
     # Cek apakah user punya sesi study aktif di channel ini
-    current_prefix = get_prefix(bot, message)
-    if user_id in _active_study and not message.content.startswith(current_prefix):
+    if user_id in _active_study and not is_command:
         sesi = _active_study[user_id]
 
         # Pastiin pesannya di channel yang sama saat study dimulai
