@@ -865,11 +865,14 @@ async def on_message(message):
                                     {
                                         "role": "system",
                                         "content": (
-                                            "Buat ringkasan singkat sesi belajar ini dalam 1-2 kalimat. "
-                                            "Sebutkan: topik yang dipelajari, poin penting yang dibahas, "
-                                            "dan apakah user menjawab quiz dengan benar. "
+                                            "Buat ringkasan sesi belajar ini dalam 2-3 kalimat. "
+                                            "Wajib sebutkan: (1) topik dan poin spesifik yang dipelajari, "
+                                            "(2) apakah user berhasil menjawab quiz dengan benar atau tidak. "
                                             "Gunakan bahasa yang sama dengan percakapan. "
-                                            "Jangan lebih dari 100 kata. Langsung tulis ringkasannya tanpa pembuka."
+                                            "Jangan tulis salam, jangan tulis 'Sayonara' atau kata perpisahan. "
+                                            "Langsung tulis ringkasannya, contoh: "
+                                            "'User belajar perkenalan diri dalam bahasa Jepang (watashi wa, hajimemashite). "
+                                            "Quiz tentang cara memperkenalkan nama dijawab dengan benar.'"
                                         )
                                     }
                                 ] + clean_history
@@ -1969,10 +1972,11 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
                     f"\n4. Kalau benar: kasih feedback positif, lalu tanya 'Mau lanjut materi berikutnya atau udahan?'"
                     f"\n5. Kalau salah: kasih hint, minta coba lagi"
                     f"\n6. Kalau user bilang 'lanjut': jelasin materi berikutnya"
-                    f"\n7. Kalau user mau selesai (bilang 'udahan', 'stop', 'selesai', 'cukup', 'done'):"
-                    f" tulis pesan penutup singkat, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
+                    f"\n7. Sesi HANYA selesai kalau user dengan JELAS bilang mau berhenti, contoh: 'udahan', 'stop', 'selesai', 'cukup', 'done', 'berhenti'"
+                    f"\n   Kalau user cuma ngobrol santai, bercanda, atau jawab soal — JANGAN akhiri sesi"
+                    f"\n   Kalau user mau selesai: tulis pesan penutup + ringkasan singkat apa yang dipelajari hari ini, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
                     f"\n\nCONTOH kalau user mau selesai:"
-                    f"\nOke sip, good job hari ini! Semangat terus ya 💪"
+                    f"\nOke sip! Hari ini kamu belajar [topik], kamu udah paham [poin penting]. Good job! 💪"
                     f"\n[SESI_SELESAI]"
                 )
             }
