@@ -162,9 +162,9 @@ def init_db():
             conn.execute(sql)
 
         print("[INIT_DB] Semua CREATE TABLE selesai, mulai sync ke Turso...")
-        conn.sync()
+        db_sync(conn)
         print("[INIT_DB] Sync #1 selesai")
-        conn.sync()
+        db_sync(conn)
         print("[INIT_DB] Sync #2 selesai → tabel sudah di Turso")
 
         existing_tables = conn.execute(
@@ -196,6 +196,12 @@ def load_memory(user_id: str, limit: int = 15) -> list:
     return [{"role": r, "content": c} for r, c in rows]
 
 
+def db_sync(conn):
+    """Commit lokal dulu baru push ke Turso — wajib dipanggil setelah setiap write."""
+    conn.commit()
+    db_sync(conn)
+
+
 def save_message(user_id: str, role: str, content: str):
     conn = get_db()
     conn.execute(
@@ -207,13 +213,13 @@ def save_message(user_id: str, role: str, content: str):
             SELECT id FROM memory WHERE user_id = ? ORDER BY id DESC LIMIT 15
         )
     """, (user_id, user_id))
-    conn.sync()
+    db_sync(conn)
 
 
 def reset_memory(user_id: str):
     conn = get_db()
     conn.execute("DELETE FROM memory WHERE user_id = ?", (user_id,))
-    conn.sync()
+    db_sync(conn)
 
 
 # ===== PROFILE =====
@@ -244,13 +250,14 @@ def save_profile(user_id: str, nickname: str = None, preferences: dict = None):
         "INSERT INTO user_profiles (user_id, nickname, preferences) VALUES (?, ?, ?)",
         (user_id, new_nickname, json.dumps(new_prefs))
     )
-    conn.sync()
+    db_sync(conn)
     print(f"[PROFILE] saved user_id={user_id} nickname={new_nickname}")
 
 
 # ===== DISCORD USERS =====
 
 def upsert_discord_user(member: discord.Member, increment_message: bool = False):
+    """Simpan/update data user Discord. TIDAK sync ke Turso — sync dilakukan terpisah."""
     try:
         conn = get_db()
         user_id = str(member.id)
@@ -286,8 +293,7 @@ def upsert_discord_user(member: discord.Member, increment_message: bool = False)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (user_id, username, display_name, joined_at, account_created, roles,
                   1 if increment_message else 0, last_seen, guild_id))
-
-        conn.sync()
+        # Tidak sync di sini — sync dilakukan batch oleh caller atau periodic_sync
     except Exception as e:
         print(f"[DISCORD_USER] Error upsert {member.name}: {e}")
 
@@ -321,19 +327,17 @@ def set_prefix(guild_id: str, prefix: str):
         ON CONFLICT(guild_id) DO UPDATE SET prefix = ?
     """, (guild_id, prefix, prefix))
 
-    # Verifikasi sebelum sync
     row = conn.execute(
         "SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)
     ).fetchone()
     print(f"[PREFIX] Sebelum sync: {row}")
 
     try:
-        conn.sync()
+        db_sync(conn)  # commit() dulu baru sync() ke Turso
         print(f"[PREFIX] Sync ke Turso berhasil")
     except Exception as e:
         print(f"[PREFIX] Sync GAGAL: {e}")
 
-    # Verifikasi sesudah sync
     row2 = conn.execute(
         "SELECT prefix FROM prefixes WHERE guild_id = ?", (guild_id,)
     ).fetchone()
@@ -356,7 +360,7 @@ def save_wack_score(user_id: str, username: str, skor: int, total: int):
             total = total + ?,
             games = games + 1
     """, (user_id, username, skor, skor, username, skor, skor))
-    conn.sync()
+    db_sync(conn)
 
 
 def get_leaderboard():
@@ -384,7 +388,8 @@ async def cek_reminder():
                 if channel:
                     await channel.send(f"⏰ <@{user_id}> Reminder: **{pesan}**")
                 conn.execute("DELETE FROM reminders WHERE id = ?", (id,))
-            conn.sync()
+            if rows:
+                db_sync(conn)
         except Exception as e:
             print(f"[REMINDER] Error: {e}, retrying in 5s...")
             global _db_conn
@@ -395,6 +400,19 @@ async def cek_reminder():
             except Exception as e2:
                 print(f"[REMINDER] init_db failed: {e2}")
         await asyncio.sleep(1)
+
+
+async def periodic_sync():
+    """Push perubahan discord_users ke Turso setiap 60 detik — non-blocking."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            conn = get_db()
+            await asyncio.get_event_loop().run_in_executor(None, lambda: db_sync(conn))
+            print("[SYNC] Periodic sync ke Turso selesai")
+        except Exception as e:
+            print(f"[SYNC] Periodic sync error: {e}")
+        await asyncio.sleep(60)
 
 
 # ===== INIT =====
@@ -461,7 +479,7 @@ async def process_intent(message, reply_text, user_id):
                 conn.execute(
                     "INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, value)
                 )
-                conn.sync()
+                db_sync(conn)
             except Exception as db_err:
                 print(f"[INTENT] todo_add ERROR: {db_err}")
                 reply = "Gagal simpan todo 😅"
@@ -487,7 +505,7 @@ async def process_intent(message, reply_text, user_id):
                 conn.execute(
                     "UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (value, user_id)
                 )
-                conn.sync()
+                db_sync(conn)
             except Exception as db_err:
                 print(f"[INTENT] todo_done ERROR: {db_err}")
                 reply = "Gagal update todo 😅"
@@ -501,7 +519,7 @@ async def process_intent(message, reply_text, user_id):
                         "INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
                         (user_id, parts[0].strip(), parts[1].strip())
                     )
-                    conn.sync()
+                    db_sync(conn)
                 except Exception as db_err:
                     print(f"[INTENT] note_add ERROR: {db_err}")
                     reply = "Gagal simpan catatan 😅"
@@ -519,7 +537,7 @@ async def process_intent(message, reply_text, user_id):
                         "INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
                         (user_id, str(message.channel.id), pesan, time.time() + detik)
                     )
-                    conn.sync()
+                    db_sync(conn)
                 except Exception as db_err:
                     print(f"[INTENT] remind_add ERROR: {db_err}")
                     reply = "Gagal set reminder 😅"
@@ -530,7 +548,7 @@ async def process_intent(message, reply_text, user_id):
                 conn.execute(
                     "DELETE FROM todos WHERE id = ? AND user_id = ?", (value, user_id)
                 )
-                conn.sync()
+                db_sync(conn)
             except Exception as db_err:
                 print(f"[INTENT] todo_delete ERROR: {db_err}")
                 reply = "Gagal hapus todo 😅"
@@ -571,7 +589,7 @@ async def process_intent(message, reply_text, user_id):
                 conn.execute(
                     "DELETE FROM notes WHERE id = ? AND user_id = ?", (value, user_id)
                 )
-                conn.sync()
+                db_sync(conn)
             except Exception as db_err:
                 print(f"[INTENT] note_delete ERROR: {db_err}")
                 reply = "Gagal hapus catatan 😅"
@@ -717,23 +735,17 @@ async def on_ready():
     except Exception as e:
         print(f"[READY] init_db error: {e}")
 
-    # Scan semua member dari semua guild
-    print("[READY] Scan member semua guild...")
-    for guild in bot.guilds:
-        try:
-            async for member in guild.fetch_members(limit=None):
-                if not member.bot:
-                    upsert_discord_user(member)
-        except Exception as e:
-            print(f"[READY] Gagal scan guild {guild.name}: {e}")
-    print("[READY] Scan member selesai")
-
     asyncio.ensure_future(cek_reminder())
+    asyncio.ensure_future(periodic_sync())
 
 
 @bot.event
 async def on_member_join(member: discord.Member):
     upsert_discord_user(member)
+    try:
+        db_sync(get_db())
+    except Exception as e:
+        print(f"[JOIN] Gagal sync: {e}")
     print(f"[JOIN] {member.name} join → disimpen ke Turso")
 
 
@@ -1338,7 +1350,7 @@ async def remind(ctx, waktu: str, *, pesan: str):
         "INSERT INTO reminders (user_id, channel_id, pesan, waktu) VALUES (?, ?, ?, ?)",
         (str(ctx.author.id), str(ctx.channel.id), pesan, waktu_remind)
     )
-    conn.sync()
+    db_sync(conn)
 
     embed = discord.Embed(
         title="⏰ Reminder Set!",
@@ -1359,7 +1371,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             await ctx.send("Tugas nya apa? `!todo add belajar python`")
             return
         conn.execute("INSERT INTO todos (user_id, tugas) VALUES (?, ?)", (user_id, tugas))
-        conn.sync()
+        db_sync(conn)
         embed = discord.Embed(description=f"✅ Ditambahin: **{tugas}**", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1383,7 +1395,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
         conn.execute(
             "UPDATE todos SET selesai = 1 WHERE id = ? AND user_id = ?", (tugas, user_id)
         )
-        conn.sync()
+        db_sync(conn)
         embed = discord.Embed(description=f"✅ Tugas #{tugas} selesai!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1392,7 +1404,7 @@ async def todo(ctx, aksi: str, *, tugas: str = None):
             await ctx.send("Masukkin ID tugasnya! `!todo delete 1`")
             return
         conn.execute("DELETE FROM todos WHERE id = ? AND user_id = ?", (tugas, user_id))
-        conn.sync()
+        db_sync(conn)
         embed = discord.Embed(description=f"🗑️ Tugas #{tugas} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
@@ -1417,7 +1429,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
             "INSERT INTO notes (user_id, judul, isi) VALUES (?, ?, ?)",
             (user_id, judul.strip(), isi.strip())
         )
-        conn.sync()
+        db_sync(conn)
         embed = discord.Embed(
             description=f"📝 Catatan **{judul.strip()}** disimpan!", color=0x00ff99
         )
@@ -1454,7 +1466,7 @@ async def note(ctx, aksi: str, *, konten: str = None):
             await ctx.send("Masukkin ID catatan! `!note delete 1`")
             return
         conn.execute("DELETE FROM notes WHERE id = ? AND user_id = ?", (konten, user_id))
-        conn.sync()
+        db_sync(conn)
         embed = discord.Embed(description=f"🗑️ Catatan #{konten} dihapus!", color=0x00ff99)
         await ctx.send(embed=embed)
 
