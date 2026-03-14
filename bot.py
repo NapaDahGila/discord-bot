@@ -833,6 +833,8 @@ async def on_message(message):
     is_command = message.content.startswith(current_prefix)
     # Cooldown hanya berlaku untuk non-command (chat biasa & study session)
     if not is_command and (now - last) < 3:
+        sisa = round(3 - (now - last), 1)
+        await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
         return
     if not is_command:
         _ai_cooldown[user_id] = now
