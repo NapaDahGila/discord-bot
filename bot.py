@@ -822,11 +822,13 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+    user_id = str(message.author.id)
     text = message.content.lower()
 
     # ===== STUDY SESSION HANDLER =====
     # Cek apakah user punya sesi study aktif di channel ini
-    if user_id in _active_study and not message.content.startswith(await get_prefix(bot, message)):
+    current_prefix = get_prefix(bot, message)
+    if user_id in _active_study and not message.content.startswith(current_prefix):
         sesi = _active_study[user_id]
 
         # Pastiin pesannya di channel yang sama saat study dimulai
@@ -908,7 +910,6 @@ async def on_message(message):
     if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
-    user_id = str(message.author.id)
     history = load_memory(user_id)
     save_message(user_id, "user", message.content)
 
