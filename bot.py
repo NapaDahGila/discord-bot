@@ -30,37 +30,69 @@ START_TIME = time.time()
 
 # ===== DATABASE (Turso) =====
 
+import libsql_experimental as libsql
+import os
+
 _db_conn = None
 _prefix_cache = {}
 
 def get_db():
     global _db_conn
-    try:
-        if _db_conn is None:
-            _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-            _db_conn.sync()
-        else:
-            _db_conn.execute("SELECT 1")
-        return _db_conn
-    except Exception as e:
-        print(f"[DB] Reconnecting... ({e})")
+    local_file = "memory.db"
+
+    # Cek koneksi existing dulu
+    if _db_conn is not None:
         try:
-            import os
-            if os.path.exists("memory.db"):
-                os.remove("memory.db")
-        except:
-            pass
-        _db_conn = libsql.connect("memory.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+            _db_conn.execute("SELECT 1")  # test koneksi
+            return _db_conn
+        except Exception as e:
+            print(f"[DB] Koneksi lama error: {e} → reconnect...")
+            _db_conn = None
+
+    try:
+        print(f"[DB] Membuat koneksi baru ke Turso")
+        print(f"      Local file : {local_file}")
+        print(f"      sync_url   : {TURSO_URL}")
+        print(f"      auth_token : {'<ada>' if TURSO_TOKEN and len(TURSO_TOKEN) > 20 else '<kosong atau invalid>'}")
+
+        if not TURSO_URL or not TURSO_URL.startswith("libsql://"):
+            raise ValueError("TURSO_URL salah! Harus dimulai dengan 'libsql://'")
+
+        if not TURSO_TOKEN:
+            raise ValueError("TURSO_TOKEN kosong! Generate ulang di dashboard Turso")
+
+        _db_conn = libsql.connect(
+            local_file,
+            sync_url=TURSO_URL,
+            auth_token=TURSO_TOKEN
+        )
+
+        print("[DB] Koneksi berhasil dibuat. Mulai sync awal...")
         _db_conn.sync()
+        print("[DB] Sync awal selesai (pull dari Turso)")
+
+        # Test kecil biar yakin koneksi OK
+        rows = _db_conn.execute("SELECT sqlite_version()").fetchone()
+        print(f"[DB] SQLite version di lokal: {rows[0]}")
+
         return _db_conn
+
+    except Exception as e:
+        print(f"[DB] GAGAL connect/sync: {type(e).__name__} → {str(e)}")
+        # Hapus file lokal kalau corrupt (opsional, tapi bantu reset)
+        if os.path.exists(local_file):
+            try:
+                os.remove(local_file)
+                print(f"[DB] File lokal '{local_file}' dihapus karena kemungkinan corrupt")
+            except Exception as rm_err:
+                print(f"[DB] Gagal hapus file lokal: {rm_err}")
+        raise  # lempar error biar kelihatan di console
 
 def init_db():
     conn = get_db()
-    # Sync dulu untuk pull data terbaru dari Turso sebelum buat tabel
-    try:
-        conn.sync()
-    except Exception:
-        pass
+
+    print("[INIT_DB] Memulai inisialisasi tabel...")
+
     tables = [
         """CREATE TABLE IF NOT EXISTS memory (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,11 +136,36 @@ def init_db():
             preferences TEXT DEFAULT '{}'
         )""",
     ]
-    for sql in tables:
-        conn.execute(sql)
-    # Sync dua kali: push tabel baru ke Turso, lalu pull data yang ada
-    conn.sync()
-    conn.sync()
+
+    try:
+        for i, sql in enumerate(tables, 1):
+            table_name = sql.split("TABLE IF NOT EXISTS")[1].split("(")[0].strip()
+            print(f"  [{i}/{len(tables)}] Membuat/mengecek tabel: {table_name}")
+            conn.execute(sql)
+
+        print("[INIT_DB] Semua CREATE TABLE berhasil dieksekusi")
+
+        # Sync 2x biar lebih aman (push schema ke remote)
+        print("[INIT_DB] Sync #1 (push ke Turso)...")
+        conn.sync()
+        print("[INIT_DB] Sync #1 selesai")
+
+        print("[INIT_DB] Sync #2 (pastikan konsisten)...")
+        conn.sync()
+        print("[INIT_DB] Sync #2 selesai → tabel seharusnya sudah ada di dashboard Turso")
+
+        # Verifikasi tabel ada di lokal
+        existing_tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        print(f"[INIT_DB] Tabel yang ada di lokal sekarang: {[t[0] for t in existing_tables]}")
+
+    except Exception as e:
+        print(f"[INIT_DB] ERROR saat buat tabel atau sync: {type(e).__name__} → {str(e)}")
+        raise
+
+# Panggil init_db() di sini (seperti sebelumnya)
+init_db()
 
 def load_memory(user_id: str, limit: int = 15) -> list:
     conn = get_db()
