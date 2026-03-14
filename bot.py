@@ -2069,6 +2069,8 @@ async def study(ctx, aksi: str, *, konten: str = None):
             nilai = f"⏱️ `{durasi_str}` • 📅 `{tanggal}`"
             if catatan:
                 nilai += f"\n📝 {catatan}"
+            else:
+                nilai += f"\n📝 *Tidak ada ringkasan*"
             embed.add_field(name=f"📖 {topik}", value=nilai, inline=False)
         await ctx.send(embed=embed)
 
