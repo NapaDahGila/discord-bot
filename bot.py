@@ -850,6 +850,7 @@ async def on_message(message):
 
                         # Auto-generate summary dari history sesi
                         try:
+                            print(f"[STUDY] Generate summary, history len={len(sesi['history'])}")
                             summary_response = client.chat.completions.create(
                                 model="llama-3.3-70b-versatile",
                                 messages=[
@@ -866,7 +867,9 @@ async def on_message(message):
                                 ] + sesi["history"]
                             )
                             catatan_auto = summary_response.choices[0].message.content or ""
-                        except Exception:
+                            print(f"[STUDY] Summary berhasil: {catatan_auto[:80]}")
+                        except Exception as e:
+                            print(f"[STUDY] Summary GAGAL: {e}")
                             catatan_auto = f"Sesi belajar {sesi['topik']} level {sesi['level']}"
 
                         conn = get_db()
