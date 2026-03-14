@@ -841,15 +841,38 @@ async def on_message(message):
 
                     # Cek apakah sesi selesai
                     if "[SESI_SELESAI]" in reply:
+                        if user_id not in _active_study:
+                            return  # udah dihapus sebelumnya, skip
                         sesi = _active_study.pop(user_id)
                         selesai = time.time()
                         durasi_detik = selesai - sesi["mulai"]
                         durasi_menit = max(1, int(durasi_detik / 60))
 
+                        # Auto-generate summary dari history sesi
+                        try:
+                            summary_response = client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "Buat ringkasan singkat sesi belajar ini dalam 1-2 kalimat. "
+                                            "Sebutkan: topik yang dipelajari, poin penting yang dibahas, "
+                                            "dan apakah user menjawab quiz dengan benar. "
+                                            "Gunakan bahasa yang sama dengan percakapan. "
+                                            "Jangan lebih dari 100 kata."
+                                        )
+                                    }
+                                ] + sesi["history"]
+                            )
+                            catatan_auto = summary_response.choices[0].message.content or ""
+                        except Exception:
+                            catatan_auto = f"Sesi belajar {sesi['topik']} level {sesi['level']}"
+
                         conn = get_db()
                         conn.execute(
-                            "INSERT INTO study_sessions (user_id, topik, mulai, selesai, durasi_menit) VALUES (?, ?, ?, ?, ?)",
-                            (user_id, sesi["topik"], sesi["mulai"], selesai, durasi_menit)
+                            "INSERT INTO study_sessions (user_id, topik, mulai, selesai, durasi_menit, catatan) VALUES (?, ?, ?, ?, ?, ?)",
+                            (user_id, sesi["topik"], sesi["mulai"], selesai, durasi_menit, catatan_auto)
                         )
                         db_sync(conn)
 
@@ -865,12 +888,14 @@ async def on_message(message):
                         )
                         embed.add_field(name="⏱️ Durasi", value=f"`{durasi_str}`", inline=True)
                         embed.add_field(name="🕐 Mulai", value=f"`{sesi['mulai_str']} WIB`", inline=True)
+                        embed.add_field(name="📝 Ringkasan", value=catatan_auto, inline=False)
                         await message.channel.send(embed=embed)
                     else:
-                        # Kirim reply dengan label user + topik
+                        # Strip [SESI_SELESAI] kalau masih ada, lalu tampilin
+                        reply_clean = reply.replace("[SESI_SELESAI]", "").strip()
                         embed = discord.Embed(
                             title=f"📚 Study Session • {message.author.display_name} • {sesi['topik'].title()} ({sesi['level'].title()})",
-                            description=reply,
+                            description=reply_clean,
                             color=0x5865F2
                         )
                         embed.set_footer(text="Ketik jawaban lo • !study stop untuk keluar kapan aja")
@@ -1925,14 +1950,17 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
                     f"Gaya lo santai tapi jelas — kayak kakak ngajarin adik. "
                     f"Deteksi bahasa user dan balas dengan bahasa yang sama. "
                     f"\n\nALUR SESI:"
-                    f"\n1. Jelasin materi dengan singkat dan jelas sesuai level"
+                    f"\n1. Jelasin materi singkat dan jelas sesuai level"
                     f"\n2. Kasih 1 pertanyaan quiz untuk cek pemahaman"
                     f"\n3. Kalau user jawab, nilai jawabannya"
                     f"\n4. Kalau benar: kasih feedback positif, lalu tanya 'Mau lanjut materi berikutnya atau udahan?'"
                     f"\n5. Kalau salah: kasih hint, minta coba lagi"
-                    f"\n6. Kalau user bilang 'lanjut': jelasin materi berikutnya yang masih satu topik"
-                    f"\n7. Kalau user bilang 'udahan' atau 'stop': balas HANYA dengan teks: [SESI_SELESAI]"
-                    f"\n\nPENTING: Kalau user mau mengakhiri sesi, balas HANYA '[SESI_SELESAI]' tanpa teks lain."
+                    f"\n6. Kalau user bilang 'lanjut': jelasin materi berikutnya"
+                    f"\n7. Kalau user mau selesai (bilang 'udahan', 'stop', 'selesai', 'cukup', 'done'):"
+                    f" tulis pesan penutup singkat, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
+                    f"\n\nCONTOH kalau user mau selesai:"
+                    f"\nOke sip, good job hari ini! Semangat terus ya 💪"
+                    f"\n[SESI_SELESAI]"
                 )
             }
         ] + history + [{"role": "user", "content": pesan}]
