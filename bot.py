@@ -826,19 +826,8 @@ async def on_message(message):
     user_id = str(message.author.id)
     text = message.content.lower()
 
-    # ===== COOLDOWN (3 detik per user, khusus pesan yang hit AI) =====
-    now = time.time()
-    last = _ai_cooldown.get(user_id, 0)
     current_prefix = get_prefix(bot, message)
     is_command = message.content.startswith(current_prefix)
-    # Cooldown hanya berlaku untuk non-command (chat biasa & study session)
-    if not is_command and (now - last) < 3:
-        sisa = round(3 - (now - last), 1)
-        await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
-        return
-    if not is_command:
-        _ai_cooldown[user_id] = now
-    # ===== END COOLDOWN =====
 
     # ===== STUDY SESSION HANDLER =====
     # Cek apakah user punya sesi study aktif di channel ini
@@ -847,6 +836,14 @@ async def on_message(message):
 
         # Pastiin pesannya di channel yang sama saat study dimulai
         if message.channel.id == sesi["channel_id"]:
+            # Cooldown di study session
+            now = time.time()
+            last = _ai_cooldown.get(user_id, 0)
+            if (now - last) < 3:
+                sisa = round(3 - (now - last), 1)
+                await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
+                return
+            _ai_cooldown[user_id] = now
             async with message.channel.typing():
                 try:
                     sesi["history"].append({"role": "user", "content": message.content})
@@ -964,6 +961,17 @@ async def on_message(message):
 
     if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
+
+    # ===== COOLDOWN (3 detik per user, khusus channel aktif) =====
+    if not is_command:
+        now = time.time()
+        last = _ai_cooldown.get(user_id, 0)
+        if (now - last) < 3:
+            sisa = round(3 - (now - last), 1)
+            await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
+            return
+        _ai_cooldown[user_id] = now
+    # ===== END COOLDOWN =====
 
     history = load_memory(user_id)
     save_message(user_id, "user", message.content)
@@ -1968,7 +1976,9 @@ _active_study = {}
 
 
 async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str) -> str:
-    """Panggil Groq buat sesi study AI."""
+    """Panggil Groq buat sesi study AI. History dibatasi 10 pesan terakhir buat hemat token."""
+    # Batasi history 10 pesan terakhir biar ga boros token
+    limited_history = history[-10:] if len(history) > 10 else history
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
@@ -1998,7 +2008,7 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
                     f"\n[SESI_SELESAI]"
                 )
             }
-        ] + history + [{"role": "user", "content": pesan}]
+        ] + limited_history + [{"role": "user", "content": pesan}]
     )
     return response.choices[0].message.content or ""
 
