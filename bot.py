@@ -867,7 +867,8 @@ async def on_message(message):
                         user_id, sesi["topik"], sesi["level"],
                         sesi["history"][:-1], message.content,
                         materi=sesi.get("materi", ""),
-                        progress=sesi.get("progress", [])
+                        progress=sesi.get("progress", []),
+                        kurikulum=sesi.get("kurikulum", [])
                     )
                     sesi["history"].append({"role": "assistant", "content": reply})
 
@@ -2100,23 +2101,166 @@ def save_subtopik_progress(user_id: str, topik_key: str, subtopik: str, selesai:
         print(f"[PROGRESS] Gagal simpen: {e}")
 
 
-async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str, materi: str = "", progress: list = None) -> str:
+# ===== KURIKULUM HARDCODE =====
+KURIKULUM = {
+    # Bahasa Jepang
+    "bahasa_jepang_n5_pemula": [
+        "hiragana_baris_a_i_u_e_o", "hiragana_baris_ka_ki_ku_ke_ko",
+        "hiragana_baris_sa_si_su_se_so", "hiragana_baris_ta_ti_tu_te_to",
+        "hiragana_baris_na_ni_nu_ne_no", "hiragana_baris_ha_hi_hu_he_ho",
+        "hiragana_baris_ma_mi_mu_me_mo", "hiragana_ya_yu_yo",
+        "hiragana_ra_ri_ru_re_ro", "hiragana_wa_wo_n",
+        "katakana_dasar", "kosakata_perkenalan_diri",
+        "kosakata_angka_1_10", "kosakata_warna", "kosakata_hari_dan_bulan",
+        "partikel_wa_ga", "partikel_wo_ni_de",
+        "pola_kalimat_desu", "pola_kalimat_imasu_arimasu",
+        "pola_kalimat_tanya_ka", "kalimat_perkenalan_diri",
+    ],
+    "bahasa_jepang_n4_menengah": [
+        "kanji_n4_dasar_50", "kanji_n4_lanjutan_50",
+        "kosakata_n4_kegiatan_sehari_hari", "kosakata_n4_pekerjaan",
+        "kosakata_n4_perasaan_dan_emosi", "te_form_kata_kerja",
+        "ta_form_kata_kerja", "nai_form_kata_kerja",
+        "pola_te_iru", "pola_te_kudasai", "pola_tai_ingin",
+        "pola_koto_ga_dekiru", "pola_nakereba_naranai",
+        "pola_toki_waktu", "pola_to_iu", "kondisional_tara_ba",
+        "keigo_dasar_honorifik", "membaca_teks_n4",
+    ],
+
+    # Bahasa Inggris CEFR
+    "bahasa_inggris_a1_pemula": [
+        "alfabet_dan_pengucapan", "salam_dan_perkenalan",
+        "angka_1_100", "warna_dan_bentuk", "anggota_keluarga",
+        "benda_sehari_hari", "kata_ganti_i_you_he_she_it_we_they",
+        "to_be_am_is_are", "kalimat_sederhana_i_am_i_have",
+        "kata_kerja_umum_like_want_have_go", "present_simple_dasar",
+        "kosakata_makanan_dan_minuman", "kosakata_tempat",
+        "kalimat_tanya_what_where_who", "kalimat_perintah_dasar",
+    ],
+    "bahasa_inggris_a2_dasar": [
+        "past_simple_regular_verbs", "past_simple_irregular_verbs",
+        "present_continuous", "future_will_dan_going_to",
+        "adjective_dan_adverb_dasar", "komparasi_more_than_as_as",
+        "preposisi_in_on_at_under", "kosakata_rutinitas_harian",
+        "kosakata_cuaca_dan_musim", "kosakata_belanja",
+        "kalimat_tanya_how_much_how_many_how_often",
+        "modal_can_could_would", "conjunctions_and_but_because",
+        "membaca_teks_pendek_a2",
+    ],
+    "bahasa_inggris_b1_menengah": [
+        "present_perfect_have_has", "present_perfect_continuous",
+        "past_continuous", "past_perfect",
+        "modal_must_should_might_may", "passive_voice_present_past",
+        "conditional_type_1_dan_2", "reported_speech_dasar",
+        "relative_clause_who_which_that", "gerund_vs_infinitive",
+        "kosakata_bisnis_dan_pekerjaan", "kosakata_travel_dan_transportasi",
+        "idiom_umum_b1", "membaca_artikel_b1", "menulis_paragraf_b1",
+    ],
+    "bahasa_inggris_b2_menengah_atas": [
+        "conditional_type_3_mixed", "passive_voice_semua_tense",
+        "reported_speech_lanjutan", "inversion_formal",
+        "cleft_sentences", "subjunctive",
+        "phrasal_verbs_umum", "collocations_penting",
+        "idiom_lanjutan_b2", "kosakata_akademik",
+        "kosakata_media_dan_berita", "argumentative_writing",
+        "membaca_teks_kompleks_b2", "diskusi_dan_debat_b2",
+    ],
+
+    # Bahasa Jerman CEFR
+    "bahasa_jerman_a1_pemula": [
+        "alfabet_jerman_dan_pengucapan", "salam_dan_perkenalan_jerman",
+        "angka_1_100_jerman", "artikel_der_die_das",
+        "kata_ganti_ich_du_er_sie_es_wir_ihr_sie",
+        "kata_kerja_sein_dan_haben", "present_tense_reguler",
+        "kosakata_keluarga_jerman", "kosakata_benda_sehari_hari",
+        "kosakata_warna_dan_bentuk", "kalimat_tanya_wer_was_wo_wann",
+        "kasus_nominativ_dan_akkusativ", "preposisi_dasar",
+        "kalimat_sederhana_ich_bin_ich_habe",
+    ],
+    "bahasa_jerman_a2_dasar": [
+        "present_tense_irregular", "perfekt_dengan_haben",
+        "perfekt_dengan_sein", "praeteritum_sein_haben_modal",
+        "modal_verbs_koennen_mussen_wollen_durfen",
+        "kasus_dativ", "preposisi_mit_bei_nach_von_zu_aus",
+        "kosakata_makanan_dan_restoran", "kosakata_belanja",
+        "kosakata_cuaca", "komparasi_adjektiv",
+        "trennbare_verben_kata_kerja_terpisah",
+        "nebensatz_dengan_weil_dass_wenn",
+    ],
+    "bahasa_jerman_b1_menengah": [
+        "konjunktiv_ii_wurden_waren_hatten",
+        "passiv_present_dan_perfekt", "futur_i",
+        "kasus_genitiv", "adjektivdeklination",
+        "relativsatz", "infinitivkonstruktion_zu",
+        "kosakata_pekerjaan_dan_karir", "kosakata_kesehatan",
+        "kosakata_lingkungan_dan_alam", "idiom_jerman_b1",
+        "membaca_teks_b1", "menulis_surat_formal",
+    ],
+    "bahasa_jerman_b2_menengah_atas": [
+        "konjunktiv_i_reported_speech", "passiv_semua_bentuk",
+        "partizip_als_adjektiv", "erweiterte_partizipialkonstruktion",
+        "kosakata_politik_dan_masyarakat", "kosakata_ekonomi",
+        "kosakata_akademik_jerman", "idiom_lanjutan_b2",
+        "argumentative_writing_jerman", "membaca_teks_kompleks_b2",
+        "diskusi_formal_b2",
+    ],
+}
+
+
+def get_kurikulum(topik_key: str) -> list:
+    """Ambil kurikulum untuk topik tertentu. Return list kosong kalau ga ada."""
+    return KURIKULUM.get(topik_key, [])
+
+
+async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str, materi: str = "", progress: list = None, kurikulum: list = None) -> str:
     """Panggil Groq buat sesi study AI. History dibatasi 10 pesan terakhir buat hemat token."""
     limited_history = history[-10:] if len(history) > 10 else history
 
-    # Susun context materi dan progress
+    # Susun context materi, kurikulum, dan progress
     extra_context = ""
-    if materi:
-        extra_context += f"\n\nREFERENSI MATERI (gunakan ini sebagai panduan mengajar):\n{materi[:2000]}"
-    if progress:
-        selesai = [p["subtopik"] for p in progress if p["selesai"]]
-        belum = [p["subtopik"] for p in progress if not p["selesai"]]
+
+    if kurikulum:
+        # Pakai kurikulum hardcode
+        if progress:
+            selesai = [p["subtopik"] for p in progress if p["selesai"]]
+            belum = [s for s in kurikulum if s not in selesai]
+        else:
+            selesai = []
+            belum = kurikulum
+
+        extra_context += f"\n\nKURIKULUM RESMI (ikuti urutan ini, jangan skip):\n{', '.join(kurikulum)}"
         if selesai:
-            extra_context += f"\n\nSUBTOPIK YANG SUDAH DIPELAJARI USER: {', '.join(selesai)}"
+            extra_context += f"\n\nSUBTOPIK SUDAH SELESAI: {', '.join(selesai)}"
         if belum:
-            extra_context += f"\n\nSUBTOPIK YANG BELUM SELESAI: {', '.join(belum)}"
-        if selesai:
-            extra_context += f"\n\nLanjutkan dari subtopik yang belum selesai, jangan ulangi yang sudah."
+            extra_context += f"\n\nSUBTOPIK BELUM DIPELAJARI: {', '.join(belum)}"
+            extra_context += f"\n\nMULAI dari subtopik pertama yang belum: '{belum[0]}'"
+        else:
+            extra_context += f"\n\nSemua subtopik sudah selesai! Kasih tau user dan sarankan naik level."
+
+        extra_context += (
+            f"\n\nATURAN KURIKULUM:"
+            f"\n- Ajarkan SATU subtopik per sesi secara mendalam"
+            f"\n- Jangan lanjut ke subtopik berikutnya sebelum user paham subtopik saat ini"
+            f"\n- Setelah user berhasil quiz subtopik ini, tulis: [SUBTOPIK_SELESAI:nama_subtopik_persis_dari_kurikulum]"
+            f"\n- Nama subtopik HARUS sama persis dengan yang ada di kurikulum di atas"
+        )
+    else:
+        # Topik bebas — AI nentuin subtopik sendiri
+        if materi:
+            extra_context += f"\n\nREFERENSI MATERI:\n{materi[:2000]}"
+        if progress:
+            selesai = [p["subtopik"] for p in progress if p["selesai"]]
+            belum = [p["subtopik"] for p in progress if not p["selesai"]]
+            if selesai:
+                extra_context += f"\n\nSUBTOPIK SUDAH DIPELAJARI: {', '.join(selesai)}"
+            if belum:
+                extra_context += f"\n\nSUBTOPIK BELUM SELESAI: {', '.join(belum)}"
+                extra_context += f"\n\nLanjutkan dari subtopik yang belum selesai."
+        extra_context += (
+            f"\n\nSetiap kali selesai mengajarkan 1 subtopik dan user paham, "
+            f"tulis: [SUBTOPIK_SELESAI:nama_subtopik_singkat]"
+        )
+
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
@@ -2128,24 +2272,15 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
                     f"Gaya lo santai tapi jelas — kayak kakak ngajarin adik. "
                     f"Deteksi bahasa user dan balas dengan bahasa yang sama. "
                     f"\n\nCARA KERJA:"
-                    f"\n- Kalau topiknya adalah belajar materi (misal 'python pemula', 'bahasa jepang n5'): jelasin materi, kasih contoh, lalu kasih 1 quiz"
-                    f"\n- Kalau topiknya adalah analisa/koreksi (misal 'analisa tulisan gw', 'koreksi bahasa inggris gw'): langsung analisa/koreksi apa yang user tulis, JANGAN kasih materi atau quiz"
-                    f"\n- Kalau topiknya adalah latihan (misal 'latihan speaking', 'latihan nulis jepang'): minta user praktek dulu, lalu kasih feedback"
-                    f"\n- Setelah selesai satu sesi analisa/feedback, tanya 'Mau lanjut atau udahan?'"
+                    f"\n- Kalau topiknya adalah belajar materi: jelasin materi, kasih contoh, lalu kasih 1 quiz"
+                    f"\n- Kalau topiknya adalah analisa/koreksi: langsung analisa/koreksi, JANGAN kasih materi atau quiz"
+                    f"\n- Kalau topiknya adalah latihan: minta user praktek dulu, lalu kasih feedback"
                     f"\n\nATURAN SESI SELESAI — SANGAT PENTING:"
-                    f"\nSesi HANYA selesai kalau user dengan EKSPLISIT dan JELAS bilang mau berhenti."
-                    f"\nKata yang trigger selesai: 'udahan', 'stop', 'selesai', 'cukup', 'done', 'berhenti', 'aku mau berhenti', 'akhiri sesi'"
-                    f"\nKata yang TIDAK trigger selesai meski terdengar filosofis atau mengandung kata perpisahan dalam bahasa asing:"
-                    f"\n- Kalimat bahasa jepang/inggris/dll yang ditulis user untuk dianalisa"
-                    f"\n- Kalimat yang mengandung 'sayonara', 'goodbye', dll tapi konteksnya untuk latihan/analisa"
-                    f"\n- Respon singkat seperti 'oke', 'mantap', 'haha', 'wkwk', 'lanjut'"
-                    f"\nKalau RAGU apakah user mau selesai atau tidak — JANGAN akhiri sesi, tanya dulu: 'Lo mau lanjut atau udahan?'"
-                    f"\n\nSetiap kali selesai mengajarkan 1 subtopik dan user paham, tulis di baris baru: [SUBTOPIK_SELESAI:nama_subtopik]"
-                    f"\nContoh: [SUBTOPIK_SELESAI:hiragana_baris_a]"
-                    f"\n\nKalau user BENAR-BENAR mau selesai: tulis pesan penutup + ringkasan singkat apa yang dipelajari, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
-                    f"\n\nCONTOH kalau user mau selesai:"
-                    f"\nOke sip! Hari ini kamu belajar [topik], kamu udah paham [poin penting]. Good job! 💪"
-                    f"\n[SESI_SELESAI]"
+                    f"\nSesi HANYA selesai kalau user dengan EKSPLISIT bilang mau berhenti."
+                    f"\nKata trigger selesai: 'udahan', 'stop', 'selesai', 'cukup', 'done', 'berhenti'"
+                    f"\nKata yang TIDAK trigger selesai: kalimat bahasa asing untuk latihan, 'oke', 'mantap', 'lanjut', 'haha'"
+                    f"\nKalau RAGU — tanya dulu: 'Lo mau lanjut atau udahan?'"
+                    f"\n\nKalau user mau selesai: tulis pesan penutup, lalu di baris TERAKHIR tulis: [SESI_SELESAI]"
                     f"{extra_context}"
                 )
             }
@@ -2154,7 +2289,7 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
     return response.choices[0].message.content or ""
 
 
-@bot.command(help="Sesi belajar bareng Enki AI", usage="!study <start/stop/log/stats> [topik] [level]")
+@bot.command(help="Sesi belajar bareng Enki AI", usage="!study <start/stop/log/stats/progress> [topik] [level]")
 async def study(ctx, aksi: str, *, konten: str = None):
     user_id = str(ctx.author.id)
     conn = get_db()
@@ -2184,17 +2319,21 @@ async def study(ctx, aksi: str, *, konten: str = None):
         topik_key = f"{topik.lower().replace(' ', '_')}_{level}"
 
         async with ctx.typing():
-            # 1. Cek cache materi di DB
-            materi = get_cached_material(topik_key)
-            if materi:
-                print(f"[MATERIAL] Pakai cache: {topik_key}")
-            elif TAVILY_KEY:
-                # 2. Search Tavily kalau belum ada di cache
-                print(f"[MATERIAL] Search Tavily: {topik_key}")
-                materi = await tavily_search(f"{topik} {level} kurikulum silabus materi belajar")
+            # 1. Cek kurikulum hardcode
+            kurikulum = get_kurikulum(topik_key)
+
+            # 2. Cek cache materi di DB (hanya kalau ga ada kurikulum hardcode)
+            materi = ""
+            if not kurikulum:
+                materi = get_cached_material(topik_key)
                 if materi:
-                    save_cached_material(topik_key, materi)
-            
+                    print(f"[MATERIAL] Pakai cache: {topik_key}")
+                elif TAVILY_KEY:
+                    print(f"[MATERIAL] Search Tavily: {topik_key}")
+                    materi = await tavily_search(f"{topik} {level} kurikulum silabus materi belajar")
+                    if materi:
+                        save_cached_material(topik_key, materi)
+
             # 3. Cek progress user
             progress = get_user_progress(user_id, topik_key)
             sudah_pernah = len(progress) > 0
@@ -2208,27 +2347,43 @@ async def study(ctx, aksi: str, *, konten: str = None):
                 "channel_id": ctx.channel.id,
                 "history": [],
                 "materi": materi,
-                "progress": progress
+                "progress": progress,
+                "kurikulum": kurikulum
             }
 
             if sudah_pernah:
                 selesai_list = [p["subtopik"] for p in progress if p["selesai"]]
-                belum_list = [p["subtopik"] for p in progress if not p["selesai"]]
-                opening = (
-                    f"User ini pernah belajar topik '{topik}' sebelumnya. "
-                    f"Subtopik yang sudah selesai: {', '.join(selesai_list) if selesai_list else 'belum ada'}. "
-                    f"Subtopik yang belum selesai: {', '.join(belum_list) if belum_list else 'semua sudah selesai'}. "
-                    f"Sambut user, kasih tau progress-nya, dan tanya mau lanjut dari subtopik yang belum atau mulai dari awal."
-                )
+                if kurikulum:
+                    belum_list = [s for s in kurikulum if s not in selesai_list]
+                    total = len(kurikulum)
+                    sudah = len(selesai_list)
+                    opening = (
+                        f"User ini pernah belajar topik '{topik}'. "
+                        f"Progress: {sudah}/{total} subtopik selesai. "
+                        f"Subtopik selesai: {', '.join(selesai_list) if selesai_list else 'belum ada'}. "
+                        f"Subtopik berikutnya: {belum_list[0] if belum_list else 'semua selesai'}. "
+                        f"Sambut user, kasih tau progress-nya ({sudah}/{total}), dan tanya mau lanjut dari '{belum_list[0] if belum_list else 'level berikutnya'}' atau mulai dari awal."
+                    )
+                else:
+                    belum_list = [p["subtopik"] for p in progress if not p["selesai"]]
+                    opening = (
+                        f"User ini pernah belajar topik '{topik}'. "
+                        f"Subtopik selesai: {', '.join(selesai_list) if selesai_list else 'belum ada'}. "
+                        f"Sambut user, kasih tau progress-nya, dan tanya mau lanjut atau mulai dari awal."
+                    )
             else:
                 opening = f"Mulai sesi belajar topik '{topik}' level {level}. Sambut user, jelasin materi pertama dan kasih contoh yang mudah dipahami."
 
-            reply = await study_ai(user_id, topik, level, [], opening, materi=materi or "", progress=progress)
+            reply = await study_ai(user_id, topik, level, [], opening, materi=materi, progress=progress, kurikulum=kurikulum)
             _active_study[user_id]["history"].append({"role": "assistant", "content": reply})
+
+            # Strip token internal dari reply
+            import re as _re
+            reply_clean = _re.sub(r'\[SUBTOPIK_SELESAI:[^\]]+\]', '', reply).replace("[SESI_SELESAI]", "").strip()
 
         embed = discord.Embed(
             title=f"📚 Study Session • {ctx.author.display_name} • {topik.title()} ({level.title()})",
-            description=reply,
+            description=reply_clean,
             color=0x5865F2
         )
         embed.set_footer(text="Ketik jawaban lo langsung di channel ini • !study stop untuk keluar")
@@ -2327,8 +2482,58 @@ async def study(ctx, aksi: str, *, konten: str = None):
             )
         await ctx.send(embed=embed)
 
+    elif aksi == "progress":
+        if not konten:
+            await ctx.send("Format: `!study progress <topik> <level>`\nContoh: `!study progress bahasa jepang n5 pemula`")
+            return
+
+        parts = konten.rsplit(" ", 1)
+        level_keywords = ["pemula", "menengah", "mahir", "a1", "a2", "b1", "b2", "c1", "c2"]
+        if len(parts) == 2 and parts[1].lower() in level_keywords:
+            topik_p = parts[0].strip()
+            level_p = parts[1].lower()
+        else:
+            topik_p = konten.strip()
+            level_p = "pemula"
+
+        topik_key_p = f"{topik_p.lower().replace(' ', '_')}_{level_p}"
+        kurikulum_p = get_kurikulum(topik_key_p)
+        progress_p = get_user_progress(user_id, topik_key_p)
+
+        if not progress_p and not kurikulum_p:
+            await ctx.send(f"Belum ada progress untuk topik `{topik_p} {level_p}` 📭")
+            return
+
+        embed = discord.Embed(
+            title=f"📊 Progress — {topik_p.title()} ({level_p.upper()})",
+            color=0x5865F2
+        )
+
+        if kurikulum_p:
+            selesai_list = [p["subtopik"] for p in progress_p if p["selesai"]]
+            total = len(kurikulum_p)
+            sudah = len(selesai_list)
+            persen = int((sudah / total) * 100)
+
+            embed.description = f"**{sudah}/{total} subtopik selesai ({persen}%)**"
+
+            items = ""
+            for subtopik in kurikulum_p:
+                status = "✅" if subtopik in selesai_list else "⬜"
+                items += f"{status} `{subtopik.replace('_', ' ')}`\n"
+            embed.add_field(name="Kurikulum", value=items[:1024], inline=False)
+        else:
+            selesai_list = [p["subtopik"] for p in progress_p if p["selesai"]]
+            belum_list = [p["subtopik"] for p in progress_p if not p["selesai"]]
+            if selesai_list:
+                embed.add_field(name="✅ Selesai", value="\n".join([f"`{s}`" for s in selesai_list])[:1024], inline=False)
+            if belum_list:
+                embed.add_field(name="⬜ Belum", value="\n".join([f"`{s}`" for s in belum_list])[:1024], inline=False)
+
+        await ctx.send(embed=embed)
+
     else:
-        await ctx.send("Aksi ga valid! Gunain: `start`, `stop`, `log`, `stats`")
+        await ctx.send("Aksi ga valid! Gunain: `start`, `stop`, `log`, `stats`, `progress`")
 
 
 bot.remove_command("help")
