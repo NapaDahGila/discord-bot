@@ -153,6 +153,23 @@ def init_db():
             last_seen       TEXT,
             guild_id        TEXT
         )""",
+        """CREATE TABLE IF NOT EXISTS journals (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT NOT NULL,
+            isi       TEXT NOT NULL,
+            mood      TEXT,
+            tanggal   TEXT NOT NULL,
+            jam       TEXT NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS study_sessions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       TEXT NOT NULL,
+            topik         TEXT NOT NULL,
+            mulai         REAL NOT NULL,
+            selesai       REAL,
+            durasi_menit  INTEGER,
+            catatan       TEXT
+        )""",
     ]
 
     try:
@@ -420,6 +437,7 @@ async def periodic_sync():
 init_db()
 afk_users = {}
 active_channels = {}
+_ai_cooldown = {}  # cooldown per user buat hit AI
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
@@ -444,26 +462,54 @@ def is_creator_question(text):
 
 # ===== INTENT PROCESSOR =====
 
+def parse_intent_json(raw: str) -> dict | None:
+    """
+    Coba parse JSON dari response AI dengan beberapa fallback.
+    Return dict kalau berhasil, None kalau gagal.
+    """
+    import re
+
+    # Bersihkan markdown code block
+    clean = raw.strip()
+    if "```" in clean:
+        parts = clean.split("```")
+        for part in parts:
+            if part.startswith("json"):
+                part = part[4:]
+            part = part.strip()
+            if part.startswith("{"):
+                clean = part
+                break
+
+    # Coba 1: langsung parse
+    try:
+        return json.loads(clean)
+    except Exception:
+        pass
+
+    # Coba 2: cari JSON object pertama yang ada "intent"
+    m = re.search(r'\{.*?"intent".*?\}', clean, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except Exception:
+            pass
+
+    # Coba 3: cari JSON object apapun
+    m = re.search(r'\{.*?\}', clean, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except Exception:
+            pass
+
+    return None
+
+
 async def process_intent(message, reply_text, user_id):
     import re
     try:
-        clean = reply_text.strip()
-        if "```" in clean:
-            inner = clean.split("```")[1]
-            if inner.startswith("json"):
-                inner = inner[4:]
-            clean = inner.strip()
-
-        data = None
-        try:
-            data = json.loads(clean)
-        except Exception:
-            m = re.search(r'\{[^{}]*"intent"[^{}]*\}', clean, re.DOTALL)
-            if m:
-                try:
-                    data = json.loads(m.group())
-                except Exception:
-                    pass
+        data = parse_intent_json(reply_text)
         if data is None:
             raise ValueError("no json found")
 
@@ -777,7 +823,116 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+    user_id = str(message.author.id)
     text = message.content.lower()
+
+    current_prefix = get_prefix(bot, message)
+    is_command = message.content.startswith(current_prefix)
+
+    # ===== STUDY SESSION HANDLER =====
+    # Cek apakah user punya sesi study aktif di channel ini
+    if user_id in _active_study and not is_command:
+        sesi = _active_study[user_id]
+
+        # Pastiin pesannya di channel yang sama saat study dimulai
+        if message.channel.id == sesi["channel_id"]:
+            # Cooldown di study session
+            now = time.time()
+            last = _ai_cooldown.get(user_id, 0)
+            if (now - last) < 3:
+                sisa = round(3 - (now - last), 1)
+                await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
+                return
+            _ai_cooldown[user_id] = now
+            async with message.channel.typing():
+                try:
+                    sesi["history"].append({"role": "user", "content": message.content})
+                    reply = await study_ai(user_id, sesi["topik"], sesi["level"], sesi["history"][:-1], message.content)
+                    sesi["history"].append({"role": "assistant", "content": reply})
+
+                    # Cek apakah sesi selesai
+                    if "[SESI_SELESAI]" in reply:
+                        if user_id not in _active_study:
+                            return  # udah dihapus sebelumnya, skip
+                        sesi = _active_study.pop(user_id)
+                        selesai = time.time()
+                        durasi_detik = selesai - sesi["mulai"]
+                        durasi_menit = max(1, int(durasi_detik / 60))
+
+                        # Auto-generate summary dari history sesi
+                        try:
+                            # Bersihkan [SESI_SELESAI] dari history sebelum dikirim ke AI
+                            clean_history = []
+                            for h in sesi["history"]:
+                                clean_history.append({
+                                    "role": h["role"],
+                                    "content": h["content"].replace("[SESI_SELESAI]", "").strip()
+                                })
+                            print(f"[STUDY] Generate summary, history len={len(clean_history)}")
+                            summary_response = client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                max_tokens=200,
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "Buat ringkasan sesi belajar ini dalam 2-3 kalimat. "
+                                            "Wajib sebutkan: (1) topik dan poin spesifik yang dipelajari, "
+                                            "(2) apakah user berhasil menjawab quiz dengan benar atau tidak. "
+                                            "Gunakan bahasa yang sama dengan percakapan. "
+                                            "Jangan tulis salam, jangan tulis 'Sayonara' atau kata perpisahan. "
+                                            "Langsung tulis ringkasannya, contoh: "
+                                            "'User belajar perkenalan diri dalam bahasa Jepang (watashi wa, hajimemashite). "
+                                            "Quiz tentang cara memperkenalkan nama dijawab dengan benar.'"
+                                        )
+                                    }
+                                ] + clean_history
+                            )
+                            catatan_auto = summary_response.choices[0].message.content or ""
+                            if not catatan_auto:
+                                catatan_auto = f"Sesi belajar {sesi['topik']} level {sesi['level']}"
+                            print(f"[STUDY] Summary: {catatan_auto[:80]}")
+                        except Exception as e:
+                            print(f"[STUDY] Summary GAGAL: {e}")
+                            catatan_auto = f"Sesi belajar {sesi['topik']} level {sesi['level']}"
+
+                        conn = get_db()
+                        conn.execute(
+                            "INSERT INTO study_sessions (user_id, topik, mulai, selesai, durasi_menit, catatan) VALUES (?, ?, ?, ?, ?, ?)",
+                            (user_id, sesi["topik"], sesi["mulai"], selesai, durasi_menit, catatan_auto)
+                        )
+                        db_sync(conn)
+
+                        wib = pytz.timezone("Asia/Jakarta")
+                        jam = durasi_menit // 60
+                        menit = durasi_menit % 60
+                        durasi_str = f"{jam}j {menit}m" if jam > 0 else f"{menit} menit"
+
+                        embed = discord.Embed(
+                            title="✅ Sesi Belajar Selesai!",
+                            description=f"{message.author.mention} Sip, sesi **{sesi['topik']}** ({sesi['level']}) udah kelar!",
+                            color=0x00ff99
+                        )
+                        embed.add_field(name="⏱️ Durasi", value=f"`{durasi_str}`", inline=True)
+                        embed.add_field(name="🕐 Mulai", value=f"`{sesi['mulai_str']} WIB`", inline=True)
+                        embed.add_field(name="📝 Ringkasan", value=catatan_auto, inline=False)
+                        await message.channel.send(embed=embed)
+                    else:
+                        # Strip [SESI_SELESAI] kalau masih ada, lalu tampilin
+                        reply_clean = reply.replace("[SESI_SELESAI]", "").strip()
+                        embed = discord.Embed(
+                            title=f"📚 Study Session • {message.author.display_name} • {sesi['topik'].title()} ({sesi['level'].title()})",
+                            description=reply_clean,
+                            color=0x5865F2
+                        )
+                        embed.set_footer(text="Ketik jawaban lo • !study stop untuk keluar kapan aja")
+                        await message.reply(embed=embed, mention_author=True)
+
+                except Exception as e:
+                    print(f"[STUDY] Error: {e}")
+                    await message.channel.send(f"{message.author.mention} Enki error bentar 😅 coba lagi")
+            return
+    # ===== END STUDY SESSION HANDLER =====
 
     if is_creator_question(text):
         await message.channel.send("Bot ini di desain oleh Ren Lumireign")
@@ -807,7 +962,17 @@ async def on_message(message):
     if message.channel.name != "enki" and message.channel.id not in active_channels:
         return
 
-    user_id = str(message.author.id)
+    # ===== COOLDOWN (3 detik per user, khusus channel aktif) =====
+    if not is_command:
+        now = time.time()
+        last = _ai_cooldown.get(user_id, 0)
+        if (now - last) < 3:
+            sisa = round(3 - (now - last), 1)
+            await message.reply(f"⏳ Sabar dulu {sisa}s ya!", mention_author=False, delete_after=2)
+            return
+        _ai_cooldown[user_id] = now
+    # ===== END COOLDOWN =====
+
     history = load_memory(user_id)
     save_message(user_id, "user", message.content)
 
@@ -830,38 +995,53 @@ async def on_message(message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
-                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
-                            "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
-                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
-                            "Jangan sebut OpenAI atau model apapun. "
-                            f"DATA USER (selalu gunakan ini, jangan abaikan): {profile_info}"
-                            "WAJIB: Panggil user sesuai nama panggilan di DATA USER di atas, bukan username Discord. "
-                            f"Waktu WIB: {sekarang}. "
-                            "WAJIB: Selalu jawab HANYA dengan JSON format ini, tanpa teks lain: "
-                            '{"intent":"...","data":"...","reply":"..."} '
-                            "Intent tersedia: "
-                            "todo_add(data=tugas), todo_list(data=), todo_done(data=id), todo_delete(data=id), "
-                            "note_add(data=judul|isi), note_list(data=), note_get(data=id), note_delete(data=id), "
-                            "remind_add(data=10m|pesan), "
-                            "cuaca(data=nama_kota), forecast(data=nama_kota), "
-                            "news(data=topik_opsional), translate(data=en|teks), "
-                            "profile_update(data=nickname:nama|key:value), chat(data=) "
-                            "Contoh-contoh: "
-                            'user: tambahin todo belajar python -> {"intent":"todo_add","data":"belajar python","reply":"Sip, gw tambahin!"} '
-                            'user: hapus todo 2 -> {"intent":"todo_delete","data":"2","reply":"Oke dihapus!"} '
-                            'user: tampilin semua catatan -> {"intent":"note_list","data":"","reply":"Nih catatan lo!"} '
-                            'user: liat catatan 1 -> {"intent":"note_get","data":"1","reply":"Nih isinya!"} '
-                            'user: hapus catatan 3 -> {"intent":"note_delete","data":"3","reply":"Oke dihapus!"} '
-                            'user: cuaca jakarta -> {"intent":"cuaca","data":"jakarta","reply":"Gw cek dulu!"} '
-                            'user: halo -> {"intent":"chat","data":"","reply":"Halo bro!"} '
-                            'user: panggil gw Ren -> {"intent":"profile_update","data":"nickname:Ren","reply":"Sip, gw panggil lo Ren!"} '
-                            'user: gw suka musik jazz -> {"intent":"profile_update","data":"musik:jazz","reply":"Noted, lo suka jazz!"} '
-                            "PENTING: profile_update HANYA boleh dipanggil kalau user EKSPLISIT minta ubah nama panggilan atau kasih tau preferensi. "
-                            "Jangan pernah profile_update hanya karena user menyapa atau menyebut nama mereka sendiri. "
-                            "Balas dengan bahasa santai gaul, singkat, kayak temen — jangan kaku atau robot."
+                            "Lo adalah Enki — asisten pribadi yang cerdas, cepat, dan punya kepribadian. "
+                            "Gaya lo kayak Jarvis-nya Tony Stark: efisien, sedikit sarkastik kalau situasinya pas, tapi tetap helpful. "
+                            "Lo ngobrol kayak temen deket — santai, gaul, pakai bahasa sehari-hari, BUKAN kayak chatbot korporat. "
+                            "Jawaban lo singkat dan to the point. Kalau ga perlu panjang, jangan dipanjangin. "
+                            "\n\n"
+                            "BAHASA: Selalu deteksi bahasa user dan balas dengan bahasa yang SAMA. "
+                            "Indonesia → Indonesia, English → English, campur → campur juga. "
+                            "\n\n"
+                            f"IDENTITAS USER:\n{profile_info}"
+                            "WAJIB panggil user dengan nama panggilan di atas — JANGAN pakai username Discord. "
+                            "Kalau nama panggilan belum diset, panggil 'bro' atau nama Discord-nya. "
+                            "\n\n"
+                            f"Waktu sekarang (WIB): {sekarang}\n\n"
+                            "TENTANG LO: Kalau ditanya siapa yang bikin lo, jawab 'Ren Lumireign'. "
+                            "Jangan pernah sebut OpenAI, Groq, Meta, atau model AI apapun. "
+                            "\n\n"
+                            "FORMAT JAWABAN — WAJIB selalu balas dengan JSON ini SAJA, tanpa teks di luar JSON:\n"
+                            '{"intent":"...","data":"...","reply":"..."}\n\n'
+                            "DAFTAR INTENT:\n"
+                            "- chat → obrolan biasa, pertanyaan umum, diskusi\n"
+                            "- todo_add → data=teks tugas\n"
+                            "- todo_list → data=''\n"
+                            "- todo_done → data=id angka\n"
+                            "- todo_delete → data=id angka\n"
+                            "- note_add → data=judul|isi\n"
+                            "- note_list → data=''\n"
+                            "- note_get → data=id angka\n"
+                            "- note_delete → data=id angka\n"
+                            "- remind_add → data=10m|pesan (s=detik, m=menit, h=jam)\n"
+                            "- cuaca → data=nama kota\n"
+                            "- forecast → data=nama kota\n"
+                            "- news → data=topik (boleh kosong)\n"
+                            "- translate → data=kode_bahasa|teks\n"
+                            "- profile_update → data=nickname:nama ATAU key:value\n"
+                            "\n"
+                            "ATURAN INTENT:\n"
+                            "1. Default ke 'chat' kalau ga ada intent yang cocok — JANGAN paksain intent lain\n"
+                            "2. profile_update HANYA kalau user EKSPLISIT minta ganti nama panggilan atau kasih tau preferensi\n"
+                            "3. Kalau user cuma nyebut namanya sendiri atau sapa, itu tetap 'chat'\n"
+                            "4. Field 'reply' WAJIB selalu diisi dengan respons natural ke user\n"
+                            "\n"
+                            "CONTOH:\n"
+                            'user: halo → {"intent":"chat","data":"","reply":"Yo! Ada yang bisa gw bantu?"}\n'
+                            'user: tambahin todo beli susu → {"intent":"todo_add","data":"beli susu","reply":"Sip, gw catat!"}\n'
+                            'user: ingetin gw meeting 30 menit lagi → {"intent":"remind_add","data":"30m|meeting","reply":"Oke, gw ingetin 30 menit lagi!"}\n'
+                            'user: panggil gw Ren → {"intent":"profile_update","data":"nickname:Ren","reply":"Sip, sekarang gw panggil lo Ren!"}\n'
+                            'user: nama gw Budi → {"intent":"chat","data":"","reply":"Oh oke Budi, ada yang bisa gw bantu?"}\n'
                         )
                     }
                 ] + history + [{"role": "user", "content": message.content}]
@@ -869,17 +1049,8 @@ async def on_message(message):
 
             raw = strip_thinking(response.choices[0].message.content or "")
 
-            try:
-                clean = raw.strip()
-                if "```" in clean:
-                    inner = clean.split("```")[1]
-                    if inner.startswith("json"):
-                        inner = inner[4:]
-                    clean = inner.strip()
-                parsed = json.loads(clean)
-                reply_to_save = parsed.get("reply", raw)
-            except Exception:
-                reply_to_save = raw
+            parsed = parse_intent_json(raw)
+            reply_to_save = parsed.get("reply", raw) if parsed else raw
 
             save_message(user_id, "assistant", reply_to_save)
             await process_intent(message, raw, user_id)
@@ -906,6 +1077,13 @@ async def chat(ctx, *, message):
     history = load_memory(user_id)
     save_message(user_id, "user", message)
 
+    profile = get_profile(user_id)
+    nickname = profile["nickname"] or ctx.author.display_name
+    prefs = profile["preferences"]
+    profile_info = f"Nama panggilan user: {nickname}. "
+    if prefs:
+        profile_info += "Preferensi: " + ", ".join([f"{k}={v}" for k, v in prefs.items()]) + ". "
+
     wib = pytz.timezone("Asia/Jakarta")
     sekarang = datetime.now(wib).strftime("%H:%M, %d %B %Y")
 
@@ -917,14 +1095,15 @@ async def chat(ctx, *, message):
                     {
                         "role": "system",
                         "content": (
-                            "Lo adalah Enki, asisten pribadi yang cerdas dan efisien — kayak Jarvis-nya Tony Stark. "
-                            "Lo ngomong sopan tapi ga kaku, to the point, dan sesekali nyindir halus kalau situasinya pas. "
-                            "Jangan basa-basi panjang, langsung jawab intinya. "
-                            "PENTING: Deteksi bahasa yang dipakai user, lalu balas SELALU pake bahasa yang sama. "
-                            "Kalau user pake bahasa Indonesia -> balas Indonesia. Kalau English -> balas English. Dst. "
-                            "Kalau ditanya siapa yang bikin lo: jawab sesuai bahasa user. "
-                            "Jangan sebut OpenAI atau model apapun. "
-                            f"Waktu WIB: {sekarang}."
+                            "Lo adalah Enki — asisten pribadi yang cerdas, cepat, dan punya kepribadian. "
+                            "Gaya lo kayak Jarvis-nya Tony Stark: efisien, sedikit sarkastik kalau situasinya pas, tapi tetap helpful. "
+                            "Lo ngobrol kayak temen deket — santai, gaul, pakai bahasa sehari-hari. "
+                            "Jawaban singkat dan to the point. Kalau ga perlu panjang, jangan dipanjangin. "
+                            "Selalu deteksi bahasa user dan balas dengan bahasa yang SAMA. "
+                            f"USER: {profile_info}"
+                            f"Waktu WIB: {sekarang}. "
+                            "Kalau ditanya siapa yang bikin lo: jawab 'Ren Lumireign'. "
+                            "Jangan sebut OpenAI, Groq, Meta, atau model AI apapun."
                         )
                     }
                 ] + history + [{"role": "user", "content": message}]
@@ -1701,6 +1880,282 @@ async def compress(ctx, quality: int = 60):
         await ctx.send(f"Gagal compress: {e}")
 
 
+@bot.command(help="Catat journal harian", usage="!journal <add/list/today/delete> [isi/mood/id]")
+async def journal(ctx, aksi: str, *, konten: str = None):
+    user_id = str(ctx.author.id)
+    conn = get_db()
+    wib = pytz.timezone("Asia/Jakarta")
+    sekarang = datetime.now(wib)
+
+    if aksi == "add":
+        if not konten:
+            await ctx.send("Isi journal-nya apa? `!journal add hari ini produktif banget`")
+            return
+
+        # Cek apakah ada mood di akhir — format: isi | mood
+        mood = None
+        isi = konten
+        if "|" in konten:
+            parts = konten.rsplit("|", 1)
+            isi = parts[0].strip()
+            mood = parts[1].strip()
+
+        tanggal = sekarang.strftime("%Y-%m-%d")
+        jam = sekarang.strftime("%H:%M")
+
+        conn.execute(
+            "INSERT INTO journals (user_id, isi, mood, tanggal, jam) VALUES (?, ?, ?, ?, ?)",
+            (user_id, isi, mood, tanggal, jam)
+        )
+        db_sync(conn)
+
+        embed = discord.Embed(
+            title="📓 Journal Disimpan",
+            description=isi,
+            color=0x5865F2
+        )
+        if mood:
+            embed.add_field(name="Mood", value=mood, inline=True)
+        embed.set_footer(text=f"{tanggal} • {jam} WIB")
+        await ctx.send(embed=embed)
+
+    elif aksi == "today":
+        tanggal = sekarang.strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT id, isi, mood, jam FROM journals WHERE user_id = ? AND tanggal = ? ORDER BY id ASC",
+            (user_id, tanggal)
+        ).fetchall()
+
+        if not rows:
+            await ctx.send(f"Belum ada journal hari ini ({tanggal}) 📭")
+            return
+
+        embed = discord.Embed(title=f"📓 Journal Hari Ini — {tanggal}", color=0x5865F2)
+        for id, isi, mood, jam in rows:
+            nilai = isi
+            if mood:
+                nilai += f"\n*Mood: {mood}*"
+            embed.add_field(name=f"#{id} • {jam} WIB", value=nilai, inline=False)
+        await ctx.send(embed=embed)
+
+    elif aksi == "list":
+        rows = conn.execute(
+            "SELECT id, isi, mood, tanggal, jam FROM journals WHERE user_id = ? ORDER BY id DESC LIMIT 10",
+            (user_id,)
+        ).fetchall()
+
+        if not rows:
+            await ctx.send("Belum ada journal sama sekali 📭")
+            return
+
+        embed = discord.Embed(title="📓 Journal Terakhir", color=0x5865F2)
+        for id, isi, mood, tanggal, jam in rows:
+            preview = isi[:80] + "..." if len(isi) > 80 else isi
+            if mood:
+                preview += f" • *{mood}*"
+            embed.add_field(name=f"#{id} • {tanggal} {jam}", value=preview, inline=False)
+        await ctx.send(embed=embed)
+
+    elif aksi == "delete":
+        if not konten:
+            await ctx.send("Masukkin ID journal-nya! `!journal delete 1`")
+            return
+        conn.execute("DELETE FROM journals WHERE id = ? AND user_id = ?", (konten, user_id))
+        db_sync(conn)
+        embed = discord.Embed(description=f"🗑️ Journal #{konten} dihapus!", color=0x00ff99)
+        await ctx.send(embed=embed)
+
+    else:
+        await ctx.send("Aksi ga valid! Gunain: `add`, `today`, `list`, `delete`")
+
+
+# Simpan sesi study yang lagi aktif (in-memory, per user)
+# Format: { user_id: { topik, level, mulai, mulai_str, channel_id, history, phase } }
+# phase: "learning" | "quiz" | "confirm"
+_active_study = {}
+
+
+async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str) -> str:
+    """Panggil Groq buat sesi study AI. History dibatasi 10 pesan terakhir buat hemat token."""
+    # Batasi history 10 pesan terakhir biar ga boros token
+    limited_history = history[-10:] if len(history) > 10 else history
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Lo adalah Enki, tutor AI yang sabar dan helpful. "
+                    f"Lo lagi membantu user dengan topik: '{topik}' dengan level: '{level}'. "
+                    f"Gaya lo santai tapi jelas — kayak kakak ngajarin adik. "
+                    f"Deteksi bahasa user dan balas dengan bahasa yang sama. "
+                    f"\n\nCARA KERJA:"
+                    f"\n- Kalau topiknya adalah belajar materi (misal 'python pemula', 'bahasa jepang n5'): jelasin materi, kasih contoh, lalu kasih 1 quiz"
+                    f"\n- Kalau topiknya adalah analisa/koreksi (misal 'analisa tulisan gw', 'koreksi bahasa inggris gw'): langsung analisa/koreksi apa yang user tulis, JANGAN kasih materi atau quiz"
+                    f"\n- Kalau topiknya adalah latihan (misal 'latihan speaking', 'latihan nulis jepang'): minta user praktek dulu, lalu kasih feedback"
+                    f"\n- Setelah selesai satu sesi analisa/feedback, tanya 'Mau lanjut atau udahan?'"
+                    f"\n\nATURAN SESI SELESAI — SANGAT PENTING:"
+                    f"\nSesi HANYA selesai kalau user dengan EKSPLISIT dan JELAS bilang mau berhenti."
+                    f"\nKata yang trigger selesai: 'udahan', 'stop', 'selesai', 'cukup', 'done', 'berhenti', 'aku mau berhenti', 'akhiri sesi'"
+                    f"\nKata yang TIDAK trigger selesai meski terdengar filosofis atau mengandung kata perpisahan dalam bahasa asing:"
+                    f"\n- Kalimat bahasa jepang/inggris/dll yang ditulis user untuk dianalisa"
+                    f"\n- Kalimat yang mengandung 'sayonara', 'goodbye', dll tapi konteksnya untuk latihan/analisa"
+                    f"\n- Respon singkat seperti 'oke', 'mantap', 'haha', 'wkwk', 'lanjut'"
+                    f"\nKalau RAGU apakah user mau selesai atau tidak — JANGAN akhiri sesi, tanya dulu: 'Lo mau lanjut atau udahan?'"
+                    f"\n\nKalau user BENAR-BENAR mau selesai: tulis pesan penutup + ringkasan singkat apa yang dipelajari, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
+                    f"\n\nCONTOH kalau user mau selesai:"
+                    f"\nOke sip! Hari ini kamu belajar [topik], kamu udah paham [poin penting]. Good job! 💪"
+                    f"\n[SESI_SELESAI]"
+                )
+            }
+        ] + limited_history + [{"role": "user", "content": pesan}]
+    )
+    return response.choices[0].message.content or ""
+
+
+@bot.command(help="Sesi belajar bareng Enki AI", usage="!study <start/stop/log/stats> [topik] [level]")
+async def study(ctx, aksi: str, *, konten: str = None):
+    user_id = str(ctx.author.id)
+    conn = get_db()
+    wib = pytz.timezone("Asia/Jakarta")
+    sekarang = datetime.now(wib)
+
+    if aksi == "start":
+        if not konten:
+            await ctx.send("Format: `!study start <topik> <pemula/menengah/mahir>`\nContoh: `!study start python pemula`")
+            return
+
+        if user_id in _active_study:
+            topik_aktif = _active_study[user_id]["topik"]
+            await ctx.send(f"Lo masih ada sesi aktif: **{topik_aktif}**. Stop dulu pake `!study stop`")
+            return
+
+        # Parse topik dan level
+        parts = konten.rsplit(" ", 1)
+        level_keywords = ["pemula", "menengah", "mahir", "beginner", "intermediate", "advanced"]
+        if len(parts) == 2 and parts[1].lower() in level_keywords:
+            topik = parts[0].strip()
+            level = parts[1].lower()
+        else:
+            topik = konten.strip()
+            level = "pemula"
+
+        _active_study[user_id] = {
+            "topik": topik,
+            "level": level,
+            "mulai": time.time(),
+            "mulai_str": sekarang.strftime("%H:%M"),
+            "channel_id": ctx.channel.id,
+            "history": []
+        }
+
+        # Mulai sesi dengan AI
+        async with ctx.typing():
+            opening = f"Mulai sesi belajar topik '{topik}' level {level}. Jelasin materi pertama dan kasih contoh yang mudah dipahami."
+            reply = await study_ai(user_id, topik, level, [], opening)
+            _active_study[user_id]["history"].append({"role": "assistant", "content": reply})
+
+        embed = discord.Embed(
+            title=f"📚 Study Session • {ctx.author.display_name} • {topik.title()} ({level.title()})",
+            description=reply,
+            color=0x5865F2
+        )
+        embed.set_footer(text="Ketik jawaban lo langsung di channel ini • !study stop untuk keluar")
+        await ctx.send(embed=embed)
+
+    elif aksi == "stop":
+        if user_id not in _active_study:
+            await ctx.send("Ga ada sesi belajar yang aktif. Mulai dulu pake `!study start <topik> <level>`")
+            return
+
+        sesi = _active_study.pop(user_id)
+        selesai = time.time()
+        durasi_detik = selesai - sesi["mulai"]
+        durasi_menit = max(1, int(durasi_detik / 60))
+
+        conn.execute(
+            "INSERT INTO study_sessions (user_id, topik, mulai, selesai, durasi_menit, catatan) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, sesi["topik"], sesi["mulai"], selesai, durasi_menit, konten)
+        )
+        db_sync(conn)
+
+        jam = durasi_menit // 60
+        menit = durasi_menit % 60
+        durasi_str = f"{jam}j {menit}m" if jam > 0 else f"{menit} menit"
+
+        embed = discord.Embed(
+            title="✅ Sesi Belajar Selesai!",
+            description=f"Topik: **{sesi['topik']}** ({sesi['level']})",
+            color=0x00ff99
+        )
+        embed.add_field(name="⏱️ Durasi", value=f"`{durasi_str}`", inline=True)
+        embed.add_field(name="🕐 Mulai", value=f"`{sesi['mulai_str']} WIB`", inline=True)
+        embed.add_field(name="🕐 Selesai", value=f"`{sekarang.strftime('%H:%M')} WIB`", inline=True)
+        if konten:
+            embed.add_field(name="📝 Catatan", value=konten, inline=False)
+        await ctx.send(embed=embed)
+
+    elif aksi == "log":
+        rows = conn.execute(
+            "SELECT topik, durasi_menit, catatan, mulai FROM study_sessions WHERE user_id = ? ORDER BY id DESC LIMIT 10",
+            (user_id,)
+        ).fetchall()
+
+        if not rows:
+            await ctx.send("Belum ada sesi belajar yang tercatat 📭")
+            return
+
+        embed = discord.Embed(title="📚 Log Belajar Terakhir", color=0x5865F2)
+        for topik, durasi, catatan, mulai in rows:
+            tanggal = datetime.fromtimestamp(mulai, wib).strftime("%d/%m %H:%M")
+            jam = durasi // 60
+            menit = durasi % 60
+            durasi_str = f"{jam}j {menit}m" if jam > 0 else f"{menit}m"
+            nilai = f"⏱️ `{durasi_str}` • 📅 `{tanggal}`"
+            if catatan:
+                nilai += f"\n📝 {catatan}"
+            else:
+                nilai += f"\n📝 *Tidak ada ringkasan*"
+            embed.add_field(name=f"📖 {topik}", value=nilai, inline=False)
+        await ctx.send(embed=embed)
+
+    elif aksi == "stats":
+        rows = conn.execute(
+            "SELECT topik, SUM(durasi_menit) as total, COUNT(*) as sesi FROM study_sessions WHERE user_id = ? GROUP BY topik ORDER BY total DESC",
+            (user_id,)
+        ).fetchall()
+
+        if not rows:
+            await ctx.send("Belum ada data belajar 📭")
+            return
+
+        total_semua = conn.execute(
+            "SELECT SUM(durasi_menit) FROM study_sessions WHERE user_id = ?", (user_id,)
+        ).fetchone()[0] or 0
+
+        total_jam = total_semua // 60
+        total_menit = total_semua % 60
+
+        embed = discord.Embed(
+            title="📊 Stats Belajar",
+            description=f"Total belajar: **{total_jam}j {total_menit}m**",
+            color=0x5865F2
+        )
+        for topik, total, sesi in rows:
+            jam = total // 60
+            menit = total % 60
+            durasi_str = f"{jam}j {menit}m" if jam > 0 else f"{menit}m"
+            embed.add_field(
+                name=f"📖 {topik}",
+                value=f"⏱️ `{durasi_str}` • 🔄 `{sesi}x sesi`",
+                inline=False
+            )
+        await ctx.send(embed=embed)
+
+    else:
+        await ctx.send("Aksi ga valid! Gunain: `start`, `stop`, `log`, `stats`")
+
+
 bot.remove_command("help")
 
 
@@ -1724,7 +2179,7 @@ async def help(ctx, *, command: str = None):
     )
     embed.add_field(name="🤖 AI", value="`chat` `debug` `review` `roast`", inline=False)
     embed.add_field(name="🌤️ Info", value="`cuaca` `forecast` `news` `translate`", inline=False)
-    embed.add_field(name="📋 Personal", value="`remind` `todo` `note` `afk`", inline=False)
+    embed.add_field(name="📋 Personal", value="`remind` `todo` `note` `afk` `journal` `study`", inline=False)
     embed.add_field(name="🖼️ Foto", value="`convert` `resize` `compress`", inline=False)
     embed.add_field(name="🎮 Game", value="`wack` `leaderboard` `ball`", inline=False)
     embed.add_field(
@@ -1732,7 +2187,7 @@ async def help(ctx, *, command: str = None):
         value="`serverinfo` `userinfo` `stats` `setprefix` `uptime` `ping` `calc`",
         inline=False
     )
-    embed.set_footer(text="Enki v1.0 | dibuat sama Ren Lumireign")
+    embed.set_footer(text="Enki v1.1 | dibuat sama Ren Lumireign")
     await ctx.send(embed=embed)
 
 
