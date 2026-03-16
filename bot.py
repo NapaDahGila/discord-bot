@@ -19,6 +19,7 @@ WEATHER_KEY = os.getenv("WEATHER_KEY")
 NEWS_KEY = os.getenv("NEWS_KEY")
 TURSO_URL = os.getenv("TURSO_URL")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN")
+TAVILY_KEY = os.getenv("TAVILY_KEY")
 
 client = Groq(api_key=GROQ_KEY)
 
@@ -169,6 +170,21 @@ def init_db():
             selesai       REAL,
             durasi_menit  INTEGER,
             catatan       TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS study_materials (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            topik_key TEXT NOT NULL UNIQUE,
+            konten    TEXT NOT NULL,
+            dibuat    TEXT NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS study_progress (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       TEXT NOT NULL,
+            topik_key     TEXT NOT NULL,
+            subtopik      TEXT NOT NULL,
+            selesai       INTEGER DEFAULT 0,
+            terakhir      TEXT,
+            UNIQUE(user_id, topik_key, subtopik)
         )""",
     ]
 
@@ -847,8 +863,25 @@ async def on_message(message):
             async with message.channel.typing():
                 try:
                     sesi["history"].append({"role": "user", "content": message.content})
-                    reply = await study_ai(user_id, sesi["topik"], sesi["level"], sesi["history"][:-1], message.content)
+                    reply = await study_ai(
+                        user_id, sesi["topik"], sesi["level"],
+                        sesi["history"][:-1], message.content,
+                        materi=sesi.get("materi", ""),
+                        progress=sesi.get("progress", [])
+                    )
                     sesi["history"].append({"role": "assistant", "content": reply})
+
+                    # Cek apakah ada subtopik yang selesai
+                    import re as _re
+                    subtopik_matches = _re.findall(r'\[SUBTOPIK_SELESAI:([^\]]+)\]', reply)
+                    for subtopik in subtopik_matches:
+                        save_subtopik_progress(user_id, sesi["topik_key"], subtopik.strip(), selesai=True)
+                        # Update progress di state sesi juga
+                        sesi["progress"] = get_user_progress(user_id, sesi["topik_key"])
+                        print(f"[PROGRESS] Subtopik selesai: {subtopik}")
+
+                    # Strip token internal dari reply sebelum ditampilin
+                    reply_display = _re.sub(r'\[SUBTOPIK_SELESAI:[^\]]+\]', '', reply).strip()
 
                     # Cek apakah sesi selesai
                     if "[SESI_SELESAI]" in reply:
@@ -918,8 +951,8 @@ async def on_message(message):
                         embed.add_field(name="📝 Ringkasan", value=catatan_auto, inline=False)
                         await message.channel.send(embed=embed)
                     else:
-                        # Strip [SESI_SELESAI] kalau masih ada, lalu tampilin
-                        reply_clean = reply.replace("[SESI_SELESAI]", "").strip()
+                        # Strip token internal dari reply
+                        reply_clean = reply_display.replace("[SESI_SELESAI]", "").strip()
                         embed = discord.Embed(
                             title=f"📚 Study Session • {message.author.display_name} • {sesi['topik'].title()} ({sesi['level'].title()})",
                             description=reply_clean,
@@ -1975,10 +2008,115 @@ async def journal(ctx, aksi: str, *, konten: str = None):
 _active_study = {}
 
 
-async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str) -> str:
+async def tavily_search(query: str) -> str:
+    """Search web pake Tavily, return konten sebagai string."""
+    if not TAVILY_KEY:
+        return ""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_KEY,
+                    "query": query,
+                    "search_depth": "basic",
+                    "max_results": 3,
+                    "include_answer": True
+                }
+            ) as resp:
+                if resp.status != 200:
+                    print(f"[TAVILY] Error: {resp.status}")
+                    return ""
+                data = await resp.json()
+                # Ambil answer + snippet dari hasil
+                hasil = []
+                if data.get("answer"):
+                    hasil.append(data["answer"])
+                for r in data.get("results", [])[:3]:
+                    if r.get("content"):
+                        hasil.append(r["content"][:500])
+                return "\n\n".join(hasil)
+    except Exception as e:
+        print(f"[TAVILY] Exception: {e}")
+        return ""
+
+
+def get_cached_material(topik_key: str) -> str | None:
+    """Ambil materi dari cache DB. Return None kalau belum ada."""
+    try:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT konten FROM study_materials WHERE topik_key = ?", (topik_key,)
+        ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def save_cached_material(topik_key: str, konten: str):
+    """Simpen materi ke cache DB."""
+    try:
+        conn = get_db()
+        wib = pytz.timezone("Asia/Jakarta")
+        dibuat = datetime.now(wib).isoformat()
+        conn.execute(
+            "INSERT OR REPLACE INTO study_materials (topik_key, konten, dibuat) VALUES (?, ?, ?)",
+            (topik_key, konten, dibuat)
+        )
+        db_sync(conn)
+        print(f"[MATERIAL] Cache disimpen: {topik_key}")
+    except Exception as e:
+        print(f"[MATERIAL] Gagal simpen cache: {e}")
+
+
+def get_user_progress(user_id: str, topik_key: str) -> list:
+    """Ambil progress user untuk topik tertentu."""
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT subtopik, selesai, terakhir FROM study_progress WHERE user_id = ? AND topik_key = ? ORDER BY id ASC",
+            (user_id, topik_key)
+        ).fetchall()
+        return [{"subtopik": r[0], "selesai": bool(r[1]), "terakhir": r[2]} for r in rows]
+    except Exception:
+        return []
+
+
+def save_subtopik_progress(user_id: str, topik_key: str, subtopik: str, selesai: bool = False):
+    """Simpan atau update progress subtopik user."""
+    try:
+        conn = get_db()
+        wib = pytz.timezone("Asia/Jakarta")
+        terakhir = datetime.now(wib).isoformat()
+        conn.execute("""
+            INSERT INTO study_progress (user_id, topik_key, subtopik, selesai, terakhir)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, topik_key, subtopik) DO UPDATE SET
+                selesai = ?,
+                terakhir = ?
+        """, (user_id, topik_key, subtopik, int(selesai), terakhir, int(selesai), terakhir))
+        db_sync(conn)
+    except Exception as e:
+        print(f"[PROGRESS] Gagal simpen: {e}")
+
+
+async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: str, materi: str = "", progress: list = None) -> str:
     """Panggil Groq buat sesi study AI. History dibatasi 10 pesan terakhir buat hemat token."""
-    # Batasi history 10 pesan terakhir biar ga boros token
     limited_history = history[-10:] if len(history) > 10 else history
+
+    # Susun context materi dan progress
+    extra_context = ""
+    if materi:
+        extra_context += f"\n\nREFERENSI MATERI (gunakan ini sebagai panduan mengajar):\n{materi[:2000]}"
+    if progress:
+        selesai = [p["subtopik"] for p in progress if p["selesai"]]
+        belum = [p["subtopik"] for p in progress if not p["selesai"]]
+        if selesai:
+            extra_context += f"\n\nSUBTOPIK YANG SUDAH DIPELAJARI USER: {', '.join(selesai)}"
+        if belum:
+            extra_context += f"\n\nSUBTOPIK YANG BELUM SELESAI: {', '.join(belum)}"
+        if selesai:
+            extra_context += f"\n\nLanjutkan dari subtopik yang belum selesai, jangan ulangi yang sudah."
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
@@ -2002,10 +2140,13 @@ async def study_ai(user_id: str, topik: str, level: str, history: list, pesan: s
                     f"\n- Kalimat yang mengandung 'sayonara', 'goodbye', dll tapi konteksnya untuk latihan/analisa"
                     f"\n- Respon singkat seperti 'oke', 'mantap', 'haha', 'wkwk', 'lanjut'"
                     f"\nKalau RAGU apakah user mau selesai atau tidak — JANGAN akhiri sesi, tanya dulu: 'Lo mau lanjut atau udahan?'"
+                    f"\n\nSetiap kali selesai mengajarkan 1 subtopik dan user paham, tulis di baris baru: [SUBTOPIK_SELESAI:nama_subtopik]"
+                    f"\nContoh: [SUBTOPIK_SELESAI:hiragana_baris_a]"
                     f"\n\nKalau user BENAR-BENAR mau selesai: tulis pesan penutup + ringkasan singkat apa yang dipelajari, lalu di baris TERAKHIR tulis persis: [SESI_SELESAI]"
                     f"\n\nCONTOH kalau user mau selesai:"
                     f"\nOke sip! Hari ini kamu belajar [topik], kamu udah paham [poin penting]. Good job! 💪"
                     f"\n[SESI_SELESAI]"
+                    f"{extra_context}"
                 )
             }
         ] + limited_history + [{"role": "user", "content": pesan}]
@@ -2040,19 +2181,49 @@ async def study(ctx, aksi: str, *, konten: str = None):
             topik = konten.strip()
             level = "pemula"
 
-        _active_study[user_id] = {
-            "topik": topik,
-            "level": level,
-            "mulai": time.time(),
-            "mulai_str": sekarang.strftime("%H:%M"),
-            "channel_id": ctx.channel.id,
-            "history": []
-        }
+        topik_key = f"{topik.lower().replace(' ', '_')}_{level}"
 
-        # Mulai sesi dengan AI
         async with ctx.typing():
-            opening = f"Mulai sesi belajar topik '{topik}' level {level}. Jelasin materi pertama dan kasih contoh yang mudah dipahami."
-            reply = await study_ai(user_id, topik, level, [], opening)
+            # 1. Cek cache materi di DB
+            materi = get_cached_material(topik_key)
+            if materi:
+                print(f"[MATERIAL] Pakai cache: {topik_key}")
+            elif TAVILY_KEY:
+                # 2. Search Tavily kalau belum ada di cache
+                print(f"[MATERIAL] Search Tavily: {topik_key}")
+                materi = await tavily_search(f"{topik} {level} kurikulum silabus materi belajar")
+                if materi:
+                    save_cached_material(topik_key, materi)
+            
+            # 3. Cek progress user
+            progress = get_user_progress(user_id, topik_key)
+            sudah_pernah = len(progress) > 0
+
+            _active_study[user_id] = {
+                "topik": topik,
+                "level": level,
+                "topik_key": topik_key,
+                "mulai": time.time(),
+                "mulai_str": sekarang.strftime("%H:%M"),
+                "channel_id": ctx.channel.id,
+                "history": [],
+                "materi": materi,
+                "progress": progress
+            }
+
+            if sudah_pernah:
+                selesai_list = [p["subtopik"] for p in progress if p["selesai"]]
+                belum_list = [p["subtopik"] for p in progress if not p["selesai"]]
+                opening = (
+                    f"User ini pernah belajar topik '{topik}' sebelumnya. "
+                    f"Subtopik yang sudah selesai: {', '.join(selesai_list) if selesai_list else 'belum ada'}. "
+                    f"Subtopik yang belum selesai: {', '.join(belum_list) if belum_list else 'semua sudah selesai'}. "
+                    f"Sambut user, kasih tau progress-nya, dan tanya mau lanjut dari subtopik yang belum atau mulai dari awal."
+                )
+            else:
+                opening = f"Mulai sesi belajar topik '{topik}' level {level}. Sambut user, jelasin materi pertama dan kasih contoh yang mudah dipahami."
+
+            reply = await study_ai(user_id, topik, level, [], opening, materi=materi or "", progress=progress)
             _active_study[user_id]["history"].append({"role": "assistant", "content": reply})
 
         embed = discord.Embed(
@@ -2120,6 +2291,10 @@ async def study(ctx, aksi: str, *, konten: str = None):
         await ctx.send(embed=embed)
 
     elif aksi == "stats":
+        rows = conn.execute(
+            "SELECT topik, SUM(durasi_menit) as total, COUNT(*) as sesi FROM study_sessions WHERE user_id = ? GROUP BY topik ORDER BY total DESC",
+            (user_id,)
+        ).fetchall()
         rows = conn.execute(
             "SELECT topik, SUM(durasi_menit) as total, COUNT(*) as sesi FROM study_sessions WHERE user_id = ? GROUP BY topik ORDER BY total DESC",
             (user_id,)
